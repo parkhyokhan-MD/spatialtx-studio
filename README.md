@@ -75,6 +75,12 @@ Background references are listed in [REFERENCES.md](REFERENCES.md).
 
 Earlier FRAME/ISTZ spatial transcriptomics analysis materials are archived at Zenodo: doi:10.5281/zenodo.19104105. This prior archive is provided for provenance and version lineage only. It is not included as a numbered peer-reviewed reference.
 
-## License and citation
+## Citation
+
+SpatialTX Studio Desktop v0.1-beta is archived on Zenodo:
+
+https://doi.org/10.5281/zenodo.21134474
+
+## License 
 
 SpatialTX Studio Desktop is released under the Apache License 2.0. See [LICENSE](LICENSE), [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md), and [CITATION.cff](CITATION.cff).
