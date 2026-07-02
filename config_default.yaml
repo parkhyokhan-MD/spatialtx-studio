@@ -1,0 +1,65 @@
+input:
+  type: h5ad
+  path: null
+
+analysis: frame26
+gene_mode: fixed
+
+frame26:
+  status: exploratory_default
+  sigma: 0.8
+  c_q: 0.80
+  b_q: 0.80
+  g_q: 0.60
+  transition_radius_spots: 2
+  diffuse_exclude_interface_buffer: 1
+
+preprocessing:
+  mode: standard
+  min_genes_per_spot: 200
+  gene_min_spots: 10
+  target_sum: 10000.0
+  use_in_tissue: true
+  eps: 1.0e-9
+
+selection:
+  topK: 6
+  min_genes_per_program: 2
+
+smoothing:
+  mode: standard
+  sigma: 0.8
+
+thresholds:
+  interface_threshold: standard
+  c_quantile: 0.80
+  b_quantile: 0.80
+  g_quantile: 0.60
+  qscale_low: 0.05
+  qscale_high: 0.95
+
+transition_zone:
+  radius_spots: 3
+
+distance:
+  mode: spot
+  default_spot_pitch_um: null
+  transition_radius_um: null
+  calibration_method: none
+  fallback_method: spot
+
+output:
+  path: null
+  formats:
+    - csv
+    - png
+    - log
+    - config
+
+gene_programs:
+  C_FIXED: [CD8A, CD8B, NKG7, PRF1, GZMB, IFNG]
+  B_FIXED: [COL1A1, COL1A2, COL3A1, FN1, LUM, DCN]
+  C_CANDIDATES: [CD8A, CD8B, NKG7, PRF1, GZMB, IFNG, GNLY, CCL5, CTSW, TRAC]
+  B_CANDIDATES: [COL1A1, COL1A2, COL3A1, FN1, LUM, DCN, POSTN, ACTA2, TAGLN, FAP, THY1]
+  CUSTOM_C: []
+  CUSTOM_B: []

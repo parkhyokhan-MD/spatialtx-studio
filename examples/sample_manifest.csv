@@ -1,0 +1,2 @@
+sample,input_path,gene_mode
+sample1,C:\path\to\sample.h5ad,fixed

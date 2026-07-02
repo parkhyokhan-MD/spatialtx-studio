@@ -1,0 +1,3 @@
+from .metadata import APP_NAME_EN, APP_NAME_KO, APP_SHORT_NAME, VERSION
+
+__all__ = ["APP_NAME_EN", "APP_NAME_KO", "APP_SHORT_NAME", "VERSION"]

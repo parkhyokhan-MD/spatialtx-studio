@@ -1,0 +1,15 @@
+gene_mode: fixed
+
+selection:
+  topK: 6
+
+distance:
+  mode: spot
+  default_spot_pitch_um: null
+  transition_radius_um: null
+  calibration_method: none
+  fallback_method: spot
+
+gene_programs:
+  CUSTOM_C: []
+  CUSTOM_B: []
