@@ -1,12 +1,12 @@
 cff-version: 1.2.0
-message: "If you use SpatialTX Studio Desktop in research, please cite this software release."
+title: "SpatialTX Studio Desktop v0.1-beta"
+message: "If you use this software, please cite the Zenodo software record."
 type: software
-title: "SpatialTX Studio Desktop"
-version: "0.1-beta"
-date-released: 2026-07-02
 authors:
-  - family-names: Park
-    given-names: Hyokhan
-    suffix: MD
-license: Apache-2.0
-abstract: "An exploratory, research-use-only desktop prototype for spatial transcriptomics analysis."
+  - family-names: "Park"
+    given-names: "Hyokhan"
+version: "0.1-beta"
+doi: 10.5281/zenodo.21134474
+date-released: 2026-07-03
+url: "https://github.com/parkhyokhan-MD/spatialtx-studio"
+license: "Apache-2.0"
