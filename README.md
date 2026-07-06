@@ -1,16 +1,10 @@
-# SpatialTX Studio Desktop v0.1-beta
+# SpatialTX Studio Desktop v0.2-beta
 
 SpatialTX Studio Desktop is an open-source research workspace for exploratory spatial transcriptomics analysis. The release provides a local Python desktop application and command-line workflow for `.h5ad` inputs.
 
 This software is a research prototype. It is not intended for diagnosis, treatment selection, or clinical decision-making. Outputs are exploratory and require independent review and validation.
 
-## Screenshot
-
-![SpatialTX Studio Desktop screenshot](docs/images/spatialtx_desktop_screenshot.png)
-
-*SpatialTX Studio Desktop v0.1-beta interface showing exploratory C/S balance-field, transition-zone, and QUBO-inspired analysis controls.*
-
-## v0.1-beta scope
+## v0.2-beta scope
 
 - Local Python desktop application and CLI
 - Single-sample and manifest-based batch processing
@@ -18,6 +12,10 @@ This software is a research prototype. It is not intended for diagnosis, treatme
 - Spatial C/S balance fields, transition summaries, QC reports, and maps
 - Spot-based distance by default
 - Opt-in advanced hypothesis-generation utilities
+- A separate **Advanced Analysis** workspace for gene composition, interface enrichment, and local Cx/Sx spatial interaction
+- Reproducible CSV tables, 300-dpi PNG figures, vector PDFs, and JSON analysis metadata
+
+All v0.1-beta Transition Mapper functionality is retained. The fixed Cx and Sx definitions, scoring workflow, default thresholds, original CLI, and existing output contracts are unchanged.
 
 ## Core definitions
 
@@ -47,6 +45,20 @@ python desktop_app.py
 ```
 
 See [README_DESKTOP.md](README_DESKTOP.md) for the desktop workflow and [README_local_run.md](README_local_run.md) for local CLI examples.
+
+## Advanced Analysis quick start
+
+In the desktop application, scan and select one or more `.h5ad` files, then open **Advanced Analysis**. The three nested tabs use the Cx/Sx genes and quantiles currently displayed in the main workspace.
+
+The new command-line entry point is separate from the v0.1 CLI:
+
+```bash
+python advanced_cli.py --module composition --input sample.h5ad --output results
+python advanced_cli.py --module enrichment --input sample.h5ad --output results
+python advanced_cli.py --module interaction --input sample.h5ad --output results --permutations 499 --seed 20260705
+```
+
+See [RELEASE_NOTES_v0_2_beta.md](RELEASE_NOTES_v0_2_beta.md) for metric and output definitions.
 
 ## CLI quick start
 
@@ -81,12 +93,6 @@ Background references are listed in [REFERENCES.md](REFERENCES.md).
 
 Earlier FRAME/ISTZ spatial transcriptomics analysis materials are archived at Zenodo: doi:10.5281/zenodo.19104105. This prior archive is provided for provenance and version lineage only. It is not included as a numbered peer-reviewed reference.
 
-## Citation
-
-SpatialTX Studio Desktop v0.1-beta is archived on Zenodo:
-
-https://doi.org/10.5281/zenodo.21134474
-
-## License 
+## License and citation
 
 SpatialTX Studio Desktop is released under the Apache License 2.0. See [LICENSE](LICENSE), [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md), and [CITATION.cff](CITATION.cff).

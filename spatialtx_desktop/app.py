@@ -8,6 +8,7 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
 from . import APP_NAME, AUTHOR, BUILD_DATE, __version__
+from .advanced_analysis_ui import AdvancedAnalysisPanel
 from .advanced_ui import AdvancedToolsPanel
 from .workflow import (
     DEFAULT_C_GENES,
@@ -75,11 +76,13 @@ class SpatialTXDesktop(tk.Tk):
         interpretation_tab = ttk.Frame(self.right_tabs, padding=10)
         about_tab = ttk.Frame(self.right_tabs, padding=10)
         advanced_tab = ttk.Frame(self.right_tabs, padding=10)
+        advanced_analysis_tab = ttk.Frame(self.right_tabs, padding=10)
         self.right_tabs.add(analysis_tab, text="Analysis")
         self.right_tabs.add(map_tab, text="Map Viewer")
         self.right_tabs.add(qubo_tab, text="QUBO Optimizer")
         self.right_tabs.add(theory_tab, text="Theory & Metrics")
         self.right_tabs.add(interpretation_tab, text="Interpretation")
+        self.right_tabs.add(advanced_analysis_tab, text="Advanced Analysis")
         self.right_tabs.add(advanced_tab, text="Advanced Tools")
         self.right_tabs.add(about_tab, text="About & Version")
         self.interpretation_tab = interpretation_tab
@@ -162,6 +165,14 @@ class SpatialTXDesktop(tk.Tk):
         self._build_about_tab(about_tab)
         self._build_qubo_tab(qubo_tab)
         self._build_map_tab(map_tab)
+        self.advanced_analysis_panel = AdvancedAnalysisPanel(
+            advanced_analysis_tab,
+            get_samples=self._selected,
+            get_genes=self._genes,
+            get_quantiles=self._quantiles,
+            get_output=lambda: self.output_var.get(),
+        )
+        self.advanced_analysis_panel.pack(fill="both", expand=True)
         AdvancedToolsPanel(advanced_tab, on_qubo_pool=self._set_advanced_qubo_pool).pack(fill="both", expand=True)
 
     def _build_qubo_tab(self, parent: ttk.Frame) -> None:
@@ -268,7 +279,7 @@ class SpatialTXDesktop(tk.Tk):
             ("Creator", AUTHOR),
             ("Version", f"v{__version__}"),
             ("Release date", BUILD_DATE),
-            ("Edition", "First public beta release for Windows"),
+            ("Edition", "v0.2-beta quantitative analysis extension"),
         ]
         for row, (label, value) in enumerate(details):
             ttk.Label(card, text=label, font=("Segoe UI Semibold", 9)).grid(row=row, column=0, sticky="nw", pady=4)
@@ -280,10 +291,11 @@ class SpatialTXDesktop(tk.Tk):
         ttk.Label(
             description,
             text=(
-                f"SpatialTX Studio Desktop v{__version__} is the first public Windows research prototype. "
+                f"SpatialTX Studio Desktop v{__version__} preserves the original Transition Mapper and adds quantitative Cx/Sx analyses. "
                 "It scores immune-side C(x) and stromal-side S(x) gene programs, constructs the balance field "
                 "R(x)=C(x)-S(x), estimates its local spatial gradient G(x), and generates exploratory interface and diffuse-transition "
-                "calls. The desktop edition also provides a classical fixed-cardinality QUBO-inspired optimizer for compact C/S gene programs.\n\n"
+                "calls. Advanced Analysis adds gene composition, interface enrichment, and local spatial interaction outputs without "
+                "changing the Cx/Sx definitions. The desktop edition also retains the fixed-cardinality QUBO-inspired optimizer.\n\n"
                 "Operational regime labels are exploratory candidates and are not validated biological subtypes."
             ),
             wraplength=430, justify="left",
@@ -402,6 +414,22 @@ class SpatialTXDesktop(tk.Tk):
             (None, "interface_fraction — fraction of spots meeting the interface rule.\ninterface_coherence_score — interface fraction multiplied by the largest connected-component ratio; favors a coherent interface over scattered hits.\ndiffuse_fraction — fraction of diffuse-transition spots.\ntransition_burden_score — combines diffuse fraction, upper-tail gradient strength, and spatial fragmentation.\nR_dynamic_range — separation between the 90th and 10th percentiles of R.\nC/S_gene_coverage — requested program genes actually present in the h5ad feature set. Low coverage weakens interpretation.\nQC_flag — PASS, WARN, or FAIL based on gene coverage, coordinate validity, feature-name uniqueness, C/S overlap, and spot count.\n"),
             ("h2", "5. QUBO-inspired optimizer\n"),
             (None, "The optimizer chooses exactly k genes from a bounded candidate pool. It rewards agreement with the selected side, directional R separation, spatial-gradient alignment, variance, and detection. It penalizes opposite-side correlation, low detection, and redundant gene pairs. A classical simulated-annealing search minimizes the resulting binary objective. It is QUBO-inspired, not a quantum backend.\n"),
+            ("h1", "Advanced Analysis: rationale and interpretation\n"),
+            (None, "Advanced Analysis keeps the same C(x), S(x), R(x), spatial-neighbor graph, and interface rule used by the main workflow. Its three modules describe which requested genes contribute to each program, how their expression differs between interface and non-interface spots, and how the two program fields are organized locally in space.\n"),
+            ("h2", "6. Gene Composition\n"),
+            ("formula", "gene contribution (%) = 100 x gene weight / sum of weights within C or S\ngene weight = mean transformed expression\n(use mean absolute transformed expression when the processed scale contains negative values)\n"),
+            (None, "This is a within-program descriptive decomposition. It helps reveal whether a C-side or S-side score is broadly supported or dominated by a small number of genes. Missing genes remain visible with zero contribution. Percentages are not effect sizes, cell fractions, causal importance, or evidence that a gene defines a biological state.\n"),
+            ("h2", "7. Interface Enrichment\n"),
+            ("formula", "interface group = high C AND high S AND high G\ncomparison = expression in interface spots versus all other spots\nreported evidence = fold enrichment + Hedges' g + two-sided Mann-Whitney U\nmultiple testing = Benjamini-Hochberg false-discovery-rate adjustment\n"),
+            (None, "Fold enrichment describes direction and magnitude on the transformed expression scale. Hedges' g is a standardized mean difference with a small-sample correction. The rank-based Mann-Whitney test is paired with FDR adjustment across the reported genes. Read these quantities together: statistical ranking alone does not establish biological relevance.\n"),
+            ("note", "Important dependence caveat\nThe interface is defined partly from the same C/S genes being tested, and nearby spots are spatially autocorrelated. Therefore these p-values are exploratory summaries, not independent confirmatory tests. Validate findings with held-out samples, alternative gene programs, sensitivity analyses, and methods that explicitly model study design and spatial dependence.\n"),
+            ("h2", "8. Local C/S Spatial Interaction\n"),
+            ("formula", "C_unit, S_unit = sample-wise 5th-to-95th percentile robust scaling\nlocal C/S = mean of each spot and its six nearest spatial neighbors\ncoexistence = mean min(local C, local S)\nantagonism = mean |local C - local S|\nbalance = mean [1 - |local C-local S|/(local C+local S)]\noverlap = sum min(local C,local S) / sum max(local C,local S)\n"),
+            (None, "Coexistence and overlap increase when both local program fields are high in the same neighborhoods. Antagonism increases when one local field dominates the other. Edge mixing measures how often neighboring C-dominant and S-dominant regions meet across the spatial graph. These indices summarize spatial organization; they do not demonstrate molecular interaction, signaling, ligand-receptor binding, or causality.\n"),
+            ("h2", "9. Spatial permutation reference\n"),
+            (None, "The interaction module holds coordinates and the C field fixed, randomly permutes S activation across spots, recomputes neighborhood values, and compares observed indices with that seeded null distribution. The resulting z-scores and two-sided permutation p-values ask whether the observed C/S arrangement differs from random S placement under this specific graph and scaling. They remain conditional on the selected genes, preprocessing, coordinates, neighbor definition, and sample.\n"),
+            ("h2", "10. Recommended reading order\n"),
+            (None, "First review QC, coordinate source, and C/S gene coverage. Then inspect gene composition for single-gene dominance, compare enrichment magnitude with FDR and effect size, and finally interpret interaction indices against their permutation reference. Repeat with plausible thresholds and gene programs. Cross-sample comparisons require harmonized preprocessing and study-level statistical design.\n"),
             ("note", "Interpretation guardrail\nRegime labels are operational candidates. Gene-program edits and optimization can change the result, so compare baseline and recomputed maps and review gene coverage. SpatialTX Studio is an exploratory research prototype and is not intended for diagnosis or treatment decisions.\n"),
         ]
         for tag, text in sections:

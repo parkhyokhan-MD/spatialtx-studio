@@ -1,4 +1,6 @@
-# SpatialTX Studio Desktop v0.1-beta
+# SpatialTX Studio Desktop v0.2-beta
+
+The v0.1 Transition Mapper workflow described below is preserved. v0.2 adds an **Advanced Analysis** top-level tab with Gene Composition, Interface Enrichment, and Cx/Sx Interaction modules. These modules consume the current sample selection, Cx/Sx gene text, and C/S/G quantiles and write only to separate timestamped `advanced_*` folders.
 
 Windows desktop research prototype for the main `.h5ad` SpatialTX workflow.
 
@@ -35,7 +37,7 @@ The application includes seven working tabs and is designed around a Full HD des
 - **Analysis** — inputs, C/S programs, thresholds, scoring execution, logs, and export
 - **Map Viewer** — displays generated PNG maps inside the application with sample navigation and fit-to-window scaling
 - **QUBO Optimizer** — independent C/S optimization and application, per-side or combined restoration of the original fixed gene sets, followed by explicit recompute and map redraw
-- **Theory & Metrics** — the C/S/R/G model, interface rules, regimes, metric interpretation, and optimizer rationale
+- **Theory & Metrics** — the C/S/R/G model, interface rules, regimes, metric interpretation, optimizer rationale, and the assumptions and limitations of Advanced Analysis
 - **Interpretation** — a sample summary table, automatically generated result explanation, gene-coverage warning, review checklist, and direct access to each PNG map
 - **Advanced Tools** — opt-in raw MEX conversion, pre/post candidate workflows, and local ligand/receptor utility exports
 - **About & Version** — creator, public version/date, release description, and research-use notice
