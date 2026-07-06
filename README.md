@@ -4,6 +4,10 @@ SpatialTX Studio Desktop is an open-source research workspace for exploratory sp
 
 This software is a research prototype. It is not intended for diagnosis, treatment selection, or clinical decision-making. Outputs are exploratory and require independent review and validation.
 
+## Screenshot
+
+![SpatialTX Studio Desktop](docs/images/spatialtx_desktop_screenshot.png)
+
 ## v0.2-beta scope
 
 - Local Python desktop application and CLI
