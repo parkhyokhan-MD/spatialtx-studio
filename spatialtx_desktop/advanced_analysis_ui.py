@@ -109,7 +109,7 @@ class AdvancedAnalysisPanel(ttk.Frame):
         self._description(
             parent,
             "Within-program gene contribution",
-            "Calculates the relative contribution of every requested Cx and Sx gene on the same transformed expression scale used by v0.1. Missing genes remain visible and are marked explicitly.",
+            "Calculates the relative contribution of every requested Cx and Sx gene on the same transformed expression scale used by the core workflow. Missing genes remain visible and are marked explicitly.",
             "gene_composition.csv, 300-dpi PNG, vector PDF, analysis_metadata.json, and a run manifest.",
         )
         ttk.Button(parent, text="Run Gene Composition", style="Primary.TButton", command=lambda: self._run("composition")).pack(fill="x", pady=(14, 0))
@@ -118,7 +118,7 @@ class AdvancedAnalysisPanel(ttk.Frame):
         self._description(
             parent,
             "Interface-like versus non-interface composition",
-            "Uses the unchanged v0.1 interface call. Reports group means, composition percentages, fold enrichment, Hedges' g, two-sided Mann-Whitney p-values, and Benjamini-Hochberg FDR.",
+            "Uses the unchanged core interface call. Reports group means, composition percentages, fold enrichment, Hedges' g, two-sided Mann-Whitney p-values, and Benjamini-Hochberg FDR.",
             "interface_enrichment.csv, 300-dpi PNG, vector PDF, analysis_metadata.json, and a run manifest.",
         )
         ttk.Label(

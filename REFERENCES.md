@@ -1,6 +1,6 @@
 # References
 
-The following peer-reviewed references provide background for spatial transcriptomics, spatial oncology, spatial tissue organization, and the software ecosystem used by SpatialTX Studio Desktop v0.1-beta.
+The following peer-reviewed references provide background for spatial transcriptomics, spatial oncology, spatial tissue organization, and the software ecosystem used by SpatialTX Studio Desktop v0.3-beta.
 
 1. Ståhl PL, Salmén F, Vickovic S, Lundmark A, Navarro JF, Magnusson J, et al. Visualization and analysis of gene expression in tissue sections by spatial transcriptomics. *Science*. 2016;353(6294):78-82. doi:10.1126/science.aaf2403.
 

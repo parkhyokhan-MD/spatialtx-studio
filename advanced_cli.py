@@ -9,7 +9,7 @@ from spatialtx_desktop.workflow import DEFAULT_C_GENES, DEFAULT_S_GENES, parse_g
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="SpatialTX Studio v0.2-beta Advanced Analysis CLI")
+    parser = argparse.ArgumentParser(description="SpatialTX Studio Desktop v0.3-beta Advanced Analysis CLI")
     parser.add_argument("--module", required=True, choices=sorted(MODULE_LABELS))
     parser.add_argument("--input", required=True, nargs="+", help="One or more local .h5ad files")
     parser.add_argument("--output", required=True, help="Output root")

@@ -1,4 +1,18 @@
-# v0.2-beta validation record
+# SpatialTX Studio Desktop validation record
+
+## v0.3-beta Import / Convert architecture
+
+Validation date: 2026-07-08
+
+- Twenty-two unit tests passed, including gzipped MEX/MTX conversion, prefixed/gzipped Visium conversion, GEO-style duplicate-equivalent Visium spatial-file selection, H5AD validation, strict missing/malformed/non-finite spatial QC, expression-only reporting, robustness diagnostics, memory preflight, and all existing Advanced Analysis tests.
+- The actual GEO-style `GSM9532669_YUBOISE_*` Visium sample converted successfully to a validated 476-spot by 18,085-gene H5AD during development testing.
+- MEX conversion code is located under `spatialtx_desktop/importers/` and no longer exists in `advanced.py` or `advanced_ui.py`.
+- Advanced UI contains hypothesis-generation and review utilities only; it displays a note directing raw imports to Import / Convert.
+- Main Mapper discovery remains restricted to `.h5ad` files.
+- UI import smoke checks passed for the desktop app, Advanced tools, and unified Import / Convert panel.
+- Robustness and memory-safety defaults preserve the existing Main Mapper workflow: smoothing is off, normalization is raw mean, perturbation checking is off, and parameter log export is on.
+
+## v0.2-beta validation record
 
 Validation date: 2026-07-05
 

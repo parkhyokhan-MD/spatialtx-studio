@@ -15,7 +15,7 @@ def load_h5ad(path: str | Path):
     if not input_path.is_file():
         raise ValueError(f"Input path is not a file: {input_path}")
     if input_path.suffix.lower() != ".h5ad":
-        raise ValueError(f"Only .h5ad input is supported in v0.1: {input_path}")
+        raise ValueError(f"Only .h5ad input is supported by the analysis engine: {input_path}")
     return sc.read_h5ad(input_path)
 
 

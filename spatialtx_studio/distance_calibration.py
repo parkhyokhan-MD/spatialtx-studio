@@ -8,6 +8,6 @@ def resolve_distance_config(config: dict) -> dict:
         return {
             **distance,
             "mode": "spot",
-            "note": "Physical distance calibration is reserved for a future version; v0.1 uses spot distance.",
+            "note": "Physical distance calibration is reserved for a future version; the current workflow uses spot distance.",
         }
     return {**distance, "note": "Using spot-based distance."}

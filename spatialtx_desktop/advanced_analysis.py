@@ -11,6 +11,7 @@ import pandas as pd
 
 from . import __version__
 from .workflow import (
+    SPATIAL_QC_MESSAGE,
     _dense,
     _gene_indices,
     _is_count_like,
@@ -134,6 +135,8 @@ def calculate_interface_enrichment(
 
     adata, c_requested, s_requested, present, lookup, matrix, count_like = _prepare(path, c_genes, s_genes)
     metrics, fields = score_h5ad(path, c_requested, s_requested, c_q, s_q, g_q)
+    if not fields.get("spatial_available", False):
+        raise ValueError(SPATIAL_QC_MESSAGE + " Interface Enrichment is unavailable.")
     interface = np.asarray(fields["interface"], dtype=bool)
     noninterface = ~interface
     program_map: dict[str, list[str]] = {"Cx": c_requested, "Sx": s_requested}
@@ -187,7 +190,7 @@ def calculate_interface_enrichment(
     metadata = {
         "sample": Path(path).stem, "source_h5ad": str(Path(path).resolve()),
         "n_spots": int(adata.n_obs), "n_interface": int(interface.sum()), "n_noninterface": int(noninterface.sum()),
-        "interface_definition": "Unchanged v0.1 rule: high Cx AND high Sx AND high local R gradient.",
+        "interface_definition": "Unchanged core rule: high Cx AND high Sx AND high local R gradient.",
         "interface_quantiles": {"Cx": c_q, "Sx": s_q, "G": g_q}, "v0_1_regime_label": metrics["regime_label"],
         "statistical_test": "Two-sided Mann-Whitney U with Benjamini-Hochberg correction; reported only when both groups contain at least two finite values.",
         "expression_transform": "log1p_count_like" if count_like else "existing_processed_scale",
@@ -243,6 +246,8 @@ def calculate_spatial_interaction(
     if permutations < 0:
         raise ValueError("Permutations must be zero or greater.")
     metrics, fields = score_h5ad(path, parse_gene_text(c_genes), parse_gene_text(s_genes), c_q, s_q, g_q)
+    if not fields.get("spatial_available", False):
+        raise ValueError(SPATIAL_QC_MESSAGE + " Cx/Sx Interaction is unavailable.")
     adata = _read_h5ad(path)
     spot_ids = np.asarray(adata.obs_names, dtype=str)
     coords = np.asarray(fields["coords"], dtype=float)
@@ -281,7 +286,7 @@ def calculate_spatial_interaction(
     })
     metadata = {
         "sample": metrics["sample"], "source_h5ad": metrics["source_h5ad"],
-        "normalization": "Each v0.1 Cx/Sx score is clipped and scaled between its sample 5th and 95th percentiles.",
+        "normalization": "Each core Cx/Sx score is clipped and scaled between its sample 5th and 95th percentiles.",
         "neighborhood": "Undirected 6-nearest-neighbor graph; local fields include each spot and its graph neighbors.",
         "metric_definitions": {
             "coexistence_index": "Mean min(local Cx, local Sx).",

@@ -19,4 +19,4 @@ Use a custom config:
 python app_cli.py --input C:\path\to\sample.h5ad --output results\sample1_istz --analysis istz --gene-mode custom --config examples\example_config.yaml
 ```
 
-For v0.1, distance is spot-based. Physical distance calibration fields are present in the config for future implementation.
+Distance is currently spot-based. Physical distance calibration fields are present in the config for future implementation.

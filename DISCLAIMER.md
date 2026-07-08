@@ -1,6 +1,6 @@
 # Disclaimer
 
-SpatialTX Studio Desktop v0.1-beta is an exploratory research prototype provided for research use only.
+SpatialTX Studio Desktop v0.3-beta is an exploratory research prototype provided for research use only.
 
 It is not a medical device and is not intended for diagnosis, prognosis, treatment selection, clinical decision-making, or any other clinical use. Outputs are computational summaries and hypothesis-generating candidates. They require independent review and validation before they can support scientific conclusions.
 

@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import datetime as dt
 import json
-import math
 import shutil
 import zipfile
-from collections import deque
+from collections import Counter, deque
+from dataclasses import asdict, dataclass
+from itertools import product
 from pathlib import Path
 from typing import Callable, Iterable
 
@@ -31,6 +32,66 @@ S_MARKERS = [
 ]
 
 Progress = Callable[[str], None]
+
+C_Q_LIST = [0.75, 0.80, 0.85]
+S_Q_LIST = [0.75, 0.80, 0.85]
+G_Q_LIST = [0.50, 0.60, 0.70]
+SMOOTHING_MODES = {"none", "knn_mean", "gaussian"}
+NORMALIZATION_MODES = {"raw_mean", "z_score", "rank_quantile"}
+MEMORY_DENSE_WARNING_BYTES = 4 * 1024 ** 3
+
+
+@dataclass(frozen=True)
+class ScoringOptions:
+    smoothing_mode: str = "none"
+    smoothing_k: int = 6
+    gaussian_sigma: float = 0.0
+    normalization_mode: str = "raw_mean"
+    perturbation_check: bool = False
+    c_q_list: tuple[float, ...] = tuple(C_Q_LIST)
+    s_q_list: tuple[float, ...] = tuple(S_Q_LIST)
+    g_q_list: tuple[float, ...] = tuple(G_Q_LIST)
+    parameter_log_export: bool = True
+    dense_warning_gb: float = MEMORY_DENSE_WARNING_BYTES / (1024 ** 3)
+
+
+def _coerce_options(options: ScoringOptions | dict | None = None) -> ScoringOptions:
+    if options is None:
+        value = ScoringOptions()
+    elif isinstance(options, ScoringOptions):
+        value = options
+    elif isinstance(options, dict):
+        allowed = set(ScoringOptions.__dataclass_fields__)
+        value = ScoringOptions(**{key: item for key, item in options.items() if key in allowed})
+    else:
+        raise TypeError("Scoring options must be a ScoringOptions object, dict, or None.")
+    if value.smoothing_mode not in SMOOTHING_MODES:
+        raise ValueError(f"Unsupported smoothing mode: {value.smoothing_mode}")
+    if value.normalization_mode not in NORMALIZATION_MODES:
+        raise ValueError(f"Unsupported normalization mode: {value.normalization_mode}")
+    if value.smoothing_k < 1:
+        raise ValueError("Smoothing k must be at least 1.")
+    if value.gaussian_sigma < 0:
+        raise ValueError("Gaussian smoothing sigma must be zero or positive.")
+    for name, values in (("C_Q_LIST", value.c_q_list), ("S_Q_LIST", value.s_q_list), ("G_Q_LIST", value.g_q_list)):
+        if not values:
+            raise ValueError(f"{name} must contain at least one threshold.")
+        if any(float(item) <= 0 or float(item) >= 1 for item in values):
+            raise ValueError(f"{name} values must be between 0 and 1.")
+    return value
+
+
+def _options_to_json(options: ScoringOptions) -> dict:
+    value = asdict(options)
+    value["c_q_list"] = list(options.c_q_list)
+    value["s_q_list"] = list(options.s_q_list)
+    value["g_q_list"] = list(options.g_q_list)
+    return value
+
+SPATIAL_QC_MESSAGE = (
+    "Expression matrix was loaded and gene-program coverage was adequate, but valid spatial coordinates "
+    "were not found. Spatial interface and transition metrics are not interpretable for this file."
+)
 
 
 def parse_gene_text(text: str | Iterable[str]) -> list[str]:
@@ -63,6 +124,80 @@ def _read_h5ad(path: str | Path):
     if not file_path.is_file() or file_path.suffix.lower() != ".h5ad":
         raise ValueError(f"Not an h5ad file: {file_path}")
     return ad.read_h5ad(file_path)
+
+
+def _decode_h5_attr(value) -> str:
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return str(value) if value is not None else ""
+
+
+def inspect_h5ad_memory(path: str | Path, dense_warning_gb: float | None = None) -> dict:
+    """Inspect matrix shape/storage without converting AnnData.X to dense."""
+    import h5py
+
+    file_path = Path(path).expanduser().resolve()
+    warning_bytes = (
+        MEMORY_DENSE_WARNING_BYTES if dense_warning_gb is None else max(0.0, float(dense_warning_gb)) * (1024 ** 3)
+    )
+    report = {
+        "path": str(file_path),
+        "n_obs": np.nan,
+        "n_vars": np.nan,
+        "shape": None,
+        "matrix_storage": "unknown",
+        "matrix_encoding": "unknown",
+        "dense_float32_bytes": np.nan,
+        "dense_float64_bytes": np.nan,
+        "dense_float32_gb": np.nan,
+        "dense_float64_gb": np.nan,
+        "dense_warning_gb": warning_bytes / (1024 ** 3),
+        "dense_conversion_warning": False,
+        "warning": "",
+    }
+    if not file_path.is_file():
+        report["warning"] = "h5ad file was not found during memory inspection"
+        return report
+    try:
+        with h5py.File(file_path, "r") as handle:
+            x = handle.get("X")
+            if x is None:
+                report["warning"] = "AnnData matrix X was not found"
+                return report
+            encoding = _decode_h5_attr(x.attrs.get("encoding-type", "unknown"))
+            report["matrix_encoding"] = encoding or "unknown"
+            shape = None
+            if hasattr(x, "shape") and len(getattr(x, "shape", ())) == 2:
+                shape = tuple(int(item) for item in x.shape)
+                report["matrix_storage"] = "dense"
+            elif hasattr(x, "attrs") and "shape" in x.attrs:
+                shape = tuple(int(item) for item in np.asarray(x.attrs["shape"]).ravel()[:2])
+                report["matrix_storage"] = "sparse" if "csr" in encoding or "csc" in encoding else "group"
+            elif hasattr(x, "keys") and "shape" in x:
+                shape = tuple(int(item) for item in np.asarray(x["shape"][:]).ravel()[:2])
+                report["matrix_storage"] = "sparse" if {"data", "indices", "indptr"}.issubset(set(x.keys())) else "group"
+            if shape is None or len(shape) != 2:
+                report["warning"] = "Unable to determine AnnData matrix shape without loading X"
+                return report
+            n_obs, n_vars = int(shape[0]), int(shape[1])
+            report["shape"] = [n_obs, n_vars]
+            report["n_obs"] = n_obs
+            report["n_vars"] = n_vars
+            dense32 = n_obs * n_vars * 4
+            dense64 = n_obs * n_vars * 8
+            report["dense_float32_bytes"] = int(dense32)
+            report["dense_float64_bytes"] = int(dense64)
+            report["dense_float32_gb"] = float(dense32 / (1024 ** 3))
+            report["dense_float64_gb"] = float(dense64 / (1024 ** 3))
+            report["dense_conversion_warning"] = bool(dense64 > warning_bytes)
+            if report["dense_conversion_warning"]:
+                report["warning"] = (
+                    f"Dense float64 conversion would require approximately {report['dense_float64_gb']:.2f} GB; "
+                    "SpatialTX will avoid full-matrix dense conversion and only extract selected C/S genes."
+                )
+    except Exception as exc:
+        report["warning"] = f"Unable to inspect h5ad memory layout: {exc}"
+    return report
 
 
 def _is_count_like(X) -> bool:
@@ -106,29 +241,21 @@ def _gene_indices(adata, requested: list[str]) -> tuple[list[int], list[str], li
     return indices, present, missing
 
 
-def _extract_coords(adata) -> tuple[np.ndarray, str]:
-    def valid(values) -> np.ndarray | None:
-        coords = np.asarray(values, dtype=float)
-        if coords.ndim == 2 and coords.shape[0] == adata.n_obs and coords.shape[1] >= 2:
-            coords = coords[:, :2]
-            if np.isfinite(coords).all():
-                return coords
-        return None
-
-    if "spatial" in adata.obsm:
-        coords = valid(adata.obsm["spatial"])
-        if coords is not None:
-            return coords, "obsm['spatial']"
-    for x, y in [
-        ("x", "y"), ("X", "Y"), ("array_col", "array_row"),
-        ("pxl_col_in_fullres", "pxl_row_in_fullres"), ("spatial_x", "spatial_y"),
-    ]:
-        if x in adata.obs.columns and y in adata.obs.columns:
-            coords = valid(adata.obs[[x, y]].to_numpy(dtype=float))
-            if coords is not None:
-                return coords, f"obs[{x},{y}]"
-    side = int(math.ceil(math.sqrt(adata.n_obs)))
-    return np.column_stack([np.arange(adata.n_obs) % side, np.arange(adata.n_obs) // side]), "fallback_grid"
+def _extract_coords(adata) -> tuple[np.ndarray | None, str, str, str]:
+    """Validate the canonical AnnData spatial coordinate contract without inventing coordinates."""
+    if "spatial" not in adata.obsm:
+        return None, "unavailable", "WARN", "spatial_coordinates_missing"
+    try:
+        coords = np.asarray(adata.obsm["spatial"], dtype=float)
+    except (TypeError, ValueError):
+        return None, "obsm['spatial'] (invalid)", "FAIL", "spatial_coordinates_not_numeric"
+    if coords.size == 0:
+        return None, "obsm['spatial'] (empty)", "FAIL", "spatial_coordinates_empty"
+    if coords.ndim != 2 or coords.shape != (adata.n_obs, 2):
+        return None, "obsm['spatial'] (wrong shape)", "FAIL", "spatial_coordinates_wrong_shape"
+    if not np.isfinite(coords).all():
+        return None, "obsm['spatial'] (non-finite)", "FAIL", "spatial_coordinates_nonfinite"
+    return coords, "obsm['spatial']", "PASS", ""
 
 
 def _knn(coords: np.ndarray, k: int = 6) -> tuple[list[tuple[int, int]], list[list[int]]]:
@@ -214,6 +341,267 @@ def _high_quantile(values: np.ndarray, quantile: float) -> np.ndarray:
     return result
 
 
+def _zscore_vector(values: np.ndarray) -> np.ndarray:
+    values = np.asarray(values, dtype=float)
+    mean = float(np.nanmean(values))
+    std = float(np.nanstd(values))
+    if not np.isfinite(std) or std == 0:
+        std = 1.0
+    return (values - mean) / std
+
+
+def _rank_quantile_vector(values: np.ndarray) -> np.ndarray:
+    values = np.asarray(values, dtype=float)
+    result = np.full(len(values), np.nan, dtype=float)
+    finite = np.isfinite(values)
+    count = int(finite.sum())
+    if count == 0:
+        return result
+    ranks = pd.Series(values[finite]).rank(method="average").to_numpy(dtype=float)
+    result[finite] = (ranks - 0.5) / max(1, count)
+    return result
+
+
+def _normalize_program_fields(C: np.ndarray, S: np.ndarray, mode: str) -> tuple[np.ndarray, np.ndarray]:
+    if mode == "raw_mean":
+        return np.asarray(C, dtype=float), np.asarray(S, dtype=float)
+    if mode == "z_score":
+        return _zscore_vector(C), _zscore_vector(S)
+    if mode == "rank_quantile":
+        return _rank_quantile_vector(C), _rank_quantile_vector(S)
+    raise ValueError(f"Unsupported normalization mode: {mode}")
+
+
+def _knn_mean_smooth(values: np.ndarray, adj: list[list[int]]) -> np.ndarray:
+    values = np.asarray(values, dtype=float)
+    smoothed = np.empty_like(values, dtype=float)
+    for index, neighbors in enumerate(adj):
+        selected = [index] + list(neighbors)
+        smoothed[index] = float(np.nanmean(values[selected]))
+    return smoothed
+
+
+def _auto_gaussian_sigma(coords: np.ndarray) -> float:
+    from scipy.spatial import cKDTree
+
+    coords = np.asarray(coords, dtype=float)
+    if len(coords) < 2:
+        return 1.0
+    distances, _ = cKDTree(coords).query(coords, k=2)
+    nearest = np.asarray(distances[:, 1], dtype=float)
+    nearest = nearest[np.isfinite(nearest) & (nearest > 0)]
+    if nearest.size == 0:
+        return 1.0
+    sigma = float(np.nanmedian(nearest))
+    return sigma if np.isfinite(sigma) and sigma > 0 else 1.0
+
+
+def _gaussian_smooth(values: np.ndarray, coords: np.ndarray, sigma: float) -> np.ndarray:
+    from scipy.spatial import cKDTree
+
+    values = np.asarray(values, dtype=float)
+    coords = np.asarray(coords, dtype=float)
+    sigma = float(sigma) if sigma and sigma > 0 else _auto_gaussian_sigma(coords)
+    radius = max(float(sigma) * 3.0, np.finfo(float).eps)
+    tree = cKDTree(coords)
+    smoothed = np.empty_like(values, dtype=float)
+    for index, neighbors in enumerate(tree.query_ball_point(coords, r=radius)):
+        if not neighbors:
+            smoothed[index] = values[index]
+            continue
+        subset = np.asarray(neighbors, dtype=int)
+        delta = coords[subset] - coords[index]
+        distance2 = np.sum(delta * delta, axis=1)
+        weights = np.exp(-0.5 * distance2 / max(sigma * sigma, np.finfo(float).eps))
+        weight_sum = float(np.sum(weights))
+        smoothed[index] = (
+            float(np.sum(values[subset] * weights) / weight_sum) if weight_sum > 0 else float(values[index])
+        )
+    return smoothed
+
+
+def _smooth_program_fields(
+    C: np.ndarray,
+    S: np.ndarray,
+    coords: np.ndarray | None,
+    options: ScoringOptions,
+) -> tuple[np.ndarray, np.ndarray, dict]:
+    diagnostics = {
+        "smoothing_applied": False,
+        "smoothing_warning": "",
+        "smoothing_sigma_used": np.nan,
+    }
+    if options.smoothing_mode == "none":
+        return C, S, diagnostics
+    if coords is None:
+        diagnostics["smoothing_warning"] = "Smoothing requested but skipped because valid spatial coordinates were unavailable."
+        return C, S, diagnostics
+    if options.smoothing_mode == "knn_mean":
+        _, smoothing_adj = _knn(coords, k=options.smoothing_k)
+        diagnostics["smoothing_applied"] = True
+        return _knn_mean_smooth(C, smoothing_adj), _knn_mean_smooth(S, smoothing_adj), diagnostics
+    if options.smoothing_mode == "gaussian":
+        sigma = float(options.gaussian_sigma) if options.gaussian_sigma > 0 else _auto_gaussian_sigma(coords)
+        diagnostics["smoothing_applied"] = True
+        diagnostics["smoothing_sigma_used"] = sigma
+        return _gaussian_smooth(C, coords, sigma), _gaussian_smooth(S, coords, sigma), diagnostics
+    raise ValueError(f"Unsupported smoothing mode: {options.smoothing_mode}")
+
+
+def _classify_fields(
+    C: np.ndarray,
+    S: np.ndarray,
+    R: np.ndarray,
+    G: np.ndarray,
+    adj: list[list[int]],
+    edges: list[tuple[int, int]],
+    spatial_available: bool,
+    c_q: float,
+    s_q: float,
+    g_q: float,
+) -> dict:
+    high_c = _high_quantile(C, c_q)
+    high_s = _high_quantile(S, s_q)
+    if spatial_available:
+        high_g = _high_quantile(G, g_q)
+        interface = high_c & high_s & high_g
+        diffuse = high_g & (high_c | high_s) & ~interface
+        interface_sizes = _components(interface, adj)
+        diffuse_sizes = _components(diffuse, adj)
+        interface_spots, diffuse_spots = int(interface.sum()), int(diffuse.sum())
+        interface_largest = interface_sizes[0] / interface_spots if interface_spots else 0.0
+        diffuse_largest = diffuse_sizes[0] / diffuse_spots if diffuse_spots else 0.0
+        small_fraction = (sum(size <= 3 for size in diffuse_sizes) / len(diffuse_sizes)) if diffuse_sizes else 0.0
+        interface_fraction = float(np.mean(interface))
+        diffuse_fraction = float(np.mean(diffuse))
+        adj_same, adj_zero, adj_opposite, r_crossing = _adjacency_metrics(R, edges)
+        burden = (
+            0.50 * diffuse_fraction
+            + 0.25 * float(np.nanquantile(G, 0.90))
+            + 0.25 * (1 - diffuse_largest if diffuse_spots else 0)
+        )
+        if interface_fraction >= 0.01:
+            regime, localized, transition = (
+                "Type_A_candidate",
+                "Localized interface-like candidate detected",
+                "Localized interface-like transition pattern",
+            )
+        elif diffuse_fraction >= 0.05:
+            regime, localized, transition = (
+                "Type_B_candidate",
+                "Localized interface-like signal not prominent; diffuse transition burden present",
+                "Diffuse transition-zone organization",
+            )
+        else:
+            regime, localized, transition = (
+                "Type_C_candidate",
+                "Transition-poor / flat",
+                "No clear transition-zone organization",
+            )
+        public_pattern = ""
+        if regime == "Type_B_candidate":
+            if adj_zero >= 0.55 and small_fraction >= 0.20 and diffuse_largest <= 0.35:
+                public_pattern = "Fragmented diffuse transition"
+            elif adj_same >= 0.80 and adj_zero <= 0.20:
+                public_pattern = "Continuous diffuse transition"
+            else:
+                public_pattern = "Weakly organized diffuse transition"
+    else:
+        interface = np.zeros(len(C), dtype=bool)
+        diffuse = np.zeros(len(C), dtype=bool)
+        interface_sizes, diffuse_sizes = [], []
+        interface_spots = diffuse_spots = np.nan
+        interface_largest = diffuse_largest = small_fraction = np.nan
+        interface_fraction = diffuse_fraction = np.nan
+        adj_same = adj_zero = adj_opposite = r_crossing = np.nan
+        burden = np.nan
+        regime = "Spatial_QC_incomplete"
+        localized = "Unavailable: valid spatial coordinates were not found"
+        transition = "Unavailable: valid spatial coordinates were not found"
+        public_pattern = "Spatial results unavailable"
+    return {
+        "high_c": high_c,
+        "high_s": high_s,
+        "interface": interface,
+        "diffuse": diffuse,
+        "interface_sizes": interface_sizes,
+        "diffuse_sizes": diffuse_sizes,
+        "interface_spots": interface_spots,
+        "diffuse_spots": diffuse_spots,
+        "interface_largest": interface_largest,
+        "diffuse_largest": diffuse_largest,
+        "small_fraction": small_fraction,
+        "interface_fraction": interface_fraction,
+        "diffuse_fraction": diffuse_fraction,
+        "adj_same": adj_same,
+        "adj_zero": adj_zero,
+        "adj_opposite": adj_opposite,
+        "r_crossing": r_crossing,
+        "burden": burden,
+        "regime": regime,
+        "localized": localized,
+        "transition": transition,
+        "public_pattern": public_pattern,
+    }
+
+
+def _robustness_check(
+    C: np.ndarray,
+    S: np.ndarray,
+    R: np.ndarray,
+    G: np.ndarray,
+    adj: list[list[int]],
+    edges: list[tuple[int, int]],
+    spatial_available: bool,
+    options: ScoringOptions,
+) -> tuple[dict, pd.DataFrame]:
+    rows: list[dict] = []
+    if not options.perturbation_check or not spatial_available:
+        return {
+            "robustness_check": bool(options.perturbation_check),
+            "robustness_grid_evaluated": 0,
+            "dominant_regime": "",
+            "regime_stability": np.nan,
+            "dominant_typeB_subtype": "",
+            "subtype_stability": np.nan,
+            "stability_interpretation": (
+                "Not computed. Stability is a parameter-sensitivity diagnostic, not biological validation."
+            ),
+        }, pd.DataFrame(rows)
+    for c_value, s_value, g_value in product(options.c_q_list, options.s_q_list, options.g_q_list):
+        call = _classify_fields(C, S, R, G, adj, edges, True, float(c_value), float(s_value), float(g_value))
+        rows.append({
+            "C_q": float(c_value),
+            "S_q": float(s_value),
+            "G_q": float(g_value),
+            "regime_label": call["regime"],
+            "typeB_subtype": call["public_pattern"] if call["regime"] == "Type_B_candidate" else "",
+            "interface_fraction": call["interface_fraction"],
+            "diffuse_fraction": call["diffuse_fraction"],
+        })
+    table = pd.DataFrame(rows)
+    regime_counts = Counter(table["regime_label"])
+    dominant_regime, dominant_count = regime_counts.most_common(1)[0]
+    typeb_values = [value for value in table["typeB_subtype"].astype(str) if value]
+    if typeb_values:
+        subtype_counts = Counter(typeb_values)
+        dominant_subtype, subtype_count = subtype_counts.most_common(1)[0]
+        subtype_stability = subtype_count / len(typeb_values)
+    else:
+        dominant_subtype, subtype_stability = "not_applicable", np.nan
+    return {
+        "robustness_check": True,
+        "robustness_grid_evaluated": int(len(table)),
+        "dominant_regime": dominant_regime,
+        "regime_stability": float(dominant_count / max(1, len(table))),
+        "dominant_typeB_subtype": dominant_subtype,
+        "subtype_stability": float(subtype_stability) if np.isfinite(subtype_stability) else np.nan,
+        "stability_interpretation": (
+            "Parameter-sensitivity diagnostic only; this does not validate biological subtype, mechanism, or clinical relevance."
+        ),
+    }, table
+
+
 def score_h5ad(
     path: str | Path,
     c_genes: list[str],
@@ -221,7 +609,11 @@ def score_h5ad(
     c_q: float = 0.80,
     s_q: float = 0.80,
     g_q: float = 0.60,
+    options: ScoringOptions | dict | None = None,
+    preflight_info: dict | None = None,
 ):
+    options = _coerce_options(options)
+    memory_info = preflight_info or inspect_h5ad_memory(path, options.dense_warning_gb)
     adata = _read_h5ad(path)
     for name, value in (("C", c_q), ("S", s_q), ("G", g_q)):
         if not 0 < float(value) < 1:
@@ -234,6 +626,7 @@ def score_h5ad(
     if not c_idx or not s_idx:
         raise ValueError(f"Insufficient C/S genes: C present={len(c_idx)}, S present={len(s_idx)}")
     all_idx = c_idx + s_idx
+    # Memory-safety rule: never densify the full AnnData.X. Only selected C/S columns are extracted.
     expression = _dense(adata.X[:, all_idx])
     if not np.isfinite(expression).any():
         raise ValueError("Selected C/S genes contain no finite expression values.")
@@ -241,44 +634,24 @@ def score_h5ad(
     if count_like:
         expression = np.log1p(expression)
     z = _zscore_columns(expression)
-    C = np.nanmean(z[:, :len(c_idx)], axis=1)
-    S = np.nanmean(z[:, len(c_idx):], axis=1)
+    C_raw = np.nanmean(z[:, :len(c_idx)], axis=1)
+    S_raw = np.nanmean(z[:, len(c_idx):], axis=1)
+    coords, coord_source, spatial_qc_status, spatial_qc_reason = _extract_coords(adata)
+    spatial_available = coords is not None
+
+    C, S = _normalize_program_fields(C_raw, S_raw, options.normalization_mode)
+    C, S, smoothing_diagnostics = _smooth_program_fields(C, S, coords, options)
     R = C - S
     if not (np.isfinite(C).all() and np.isfinite(S).all() and np.isfinite(R).all()):
         raise ValueError("Selected C/S genes produce non-finite program scores.")
-    coords, coord_source = _extract_coords(adata)
-    edges, adj = _knn(coords)
-    G = _gradient(R, adj)
-    high_c = _high_quantile(C, c_q)
-    high_s = _high_quantile(S, s_q)
-    high_g = _high_quantile(G, g_q)
-    interface = high_c & high_s & high_g
-    diffuse = high_g & (high_c | high_s) & ~interface
-
-    interface_sizes = _components(interface, adj)
-    diffuse_sizes = _components(diffuse, adj)
-    interface_spots, diffuse_spots = int(interface.sum()), int(diffuse.sum())
-    interface_largest = interface_sizes[0] / interface_spots if interface_spots else 0.0
-    diffuse_largest = diffuse_sizes[0] / diffuse_spots if diffuse_spots else 0.0
-    small_fraction = (sum(size <= 3 for size in diffuse_sizes) / len(diffuse_sizes)) if diffuse_sizes else 0.0
-    interface_fraction = float(np.mean(interface))
-    diffuse_fraction = float(np.mean(diffuse))
-    adj_same, adj_zero, adj_opposite, r_crossing = _adjacency_metrics(R, edges)
-    burden = 0.50 * diffuse_fraction + 0.25 * float(np.nanquantile(G, 0.90)) + 0.25 * (1 - diffuse_largest if diffuse_spots else 0)
-    if interface_fraction >= 0.01:
-        regime, localized, transition = "Type_A_candidate", "Localized interface-like candidate detected", "Localized interface-like transition pattern"
-    elif diffuse_fraction >= 0.05:
-        regime, localized, transition = "Type_B_candidate", "Localized interface-like signal not prominent; diffuse transition burden present", "Diffuse transition-zone organization"
+    if spatial_available:
+        edges, adj = _knn(coords)
+        G = _gradient(R, adj)
     else:
-        regime, localized, transition = "Type_C_candidate", "Transition-poor / flat", "No clear transition-zone organization"
-    public_pattern = ""
-    if regime == "Type_B_candidate":
-        if adj_zero >= 0.55 and small_fraction >= 0.20 and diffuse_largest <= 0.35:
-            public_pattern = "Fragmented diffuse transition"
-        elif adj_same >= 0.80 and adj_zero <= 0.20:
-            public_pattern = "Continuous diffuse transition"
-        else:
-            public_pattern = "Weakly organized diffuse transition"
+        edges, adj = [], [[] for _ in range(adata.n_obs)]
+        G = np.full(adata.n_obs, np.nan, dtype=float)
+    classification = _classify_fields(C, S, R, G, adj, edges, spatial_available, c_q, s_q, g_q)
+    robustness, robustness_table = _robustness_check(C, S, R, G, adj, edges, spatial_available, options)
     c_coverage = len(c_present) / max(1, len(c_genes))
     s_coverage = len(s_present) / max(1, len(s_genes))
     qc_notes: list[str] = []
@@ -286,8 +659,8 @@ def score_h5ad(
         qc_notes.append("low_gene_program_coverage")
     elif min(c_coverage, s_coverage) < .8:
         qc_notes.append("partial_gene_program_coverage")
-    if coord_source == "fallback_grid":
-        qc_notes.append("spatial_coordinates_missing_or_nonfinite")
+    if not spatial_available:
+        qc_notes.append(spatial_qc_reason)
     case_insensitive_unique = len({str(gene).upper() for gene in adata.var_names}) == adata.n_vars
     if not case_insensitive_unique:
         qc_notes.append("duplicate_feature_names")
@@ -296,26 +669,60 @@ def score_h5ad(
     overlap = sorted({gene.upper() for gene in c_present} & {gene.upper() for gene in s_present})
     if overlap:
         qc_notes.append("overlapping_C_S_genes")
-    qc_flag = "PASS" if not qc_notes else "FAIL" if "low_gene_program_coverage" in qc_notes else "WARN"
+    if smoothing_diagnostics["smoothing_warning"]:
+        qc_notes.append("smoothing_skipped")
+    qc_flag = "PASS"
+    if "low_gene_program_coverage" in qc_notes or spatial_qc_status == "FAIL":
+        qc_flag = "FAIL"
+    elif qc_notes:
+        qc_flag = "WARN"
+    selected_dense64_mb = expression.size * 8 / (1024 ** 2)
     metrics = {
         "sample": Path(path).stem, "source_h5ad": str(Path(path).resolve()), "status": "ok",
         "n_spots": int(adata.n_obs), "n_genes": int(adata.n_vars), "coordinate_source": coord_source,
         "expression_transform": "log1p_count_like" if count_like else "existing_processed_scale",
-        "spatial_neighbors_k": 6,
-        "regime_label": regime, "localized_interface_call": localized, "transition_zone_call": transition,
-        "public_transition_pattern": public_pattern, "interface_fraction": interface_fraction,
-        "interface_spots": interface_spots, "n_interface_components": len(interface_sizes),
-        "largest_interface_component_ratio": interface_largest,
-        "interface_fragmentation_index": len(interface_sizes) / interface_spots if interface_spots else 0.0,
-        "interface_coherence_score": interface_fraction * interface_largest,
-        "diffuse_fraction": diffuse_fraction, "diffuse_spots": diffuse_spots,
-        "n_diffuse_components": len(diffuse_sizes), "largest_diffuse_component_ratio": diffuse_largest,
-        "small_component_fraction": small_fraction, "diffuse_coherence_score": diffuse_fraction * diffuse_largest,
-        "transition_burden_score": burden, "adj_same_fraction": adj_same, "adj_zero_fraction": adj_zero,
-        "adj_opposite_fraction": adj_opposite, "R_crossing_fraction": r_crossing,
+        "normalization_mode": options.normalization_mode,
+        "smoothing_mode": options.smoothing_mode,
+        "smoothing_k": int(options.smoothing_k),
+        "gaussian_sigma": float(options.gaussian_sigma),
+        "smoothing_applied": bool(smoothing_diagnostics["smoothing_applied"]),
+        "smoothing_sigma_used": smoothing_diagnostics["smoothing_sigma_used"],
+        "smoothing_warning": smoothing_diagnostics["smoothing_warning"],
+        "analysis_scope": "expression_and_spatial" if spatial_available else "expression_only",
+        "expression_results_status": "available",
+        "spatial_results_status": "available" if spatial_available else "unavailable_due_to_invalid_coordinates",
+        "spatial_qc_status": spatial_qc_status,
+        "spatial_qc_reason": spatial_qc_reason,
+        "spatial_qc_message": "" if spatial_available else SPATIAL_QC_MESSAGE,
+        "spatial_neighbors_k": 6 if spatial_available else np.nan,
+        "regime_label": classification["regime"],
+        "localized_interface_call": classification["localized"],
+        "transition_zone_call": classification["transition"],
+        "public_transition_pattern": classification["public_pattern"],
+        "interface_fraction": classification["interface_fraction"],
+        "interface_spots": classification["interface_spots"],
+        "n_interface_components": len(classification["interface_sizes"]) if spatial_available else np.nan,
+        "largest_interface_component_ratio": classification["interface_largest"],
+        "interface_fragmentation_index": (
+            len(classification["interface_sizes"]) / classification["interface_spots"]
+            if spatial_available and classification["interface_spots"] else 0.0 if spatial_available else np.nan
+        ),
+        "interface_coherence_score": classification["interface_fraction"] * classification["interface_largest"],
+        "diffuse_fraction": classification["diffuse_fraction"],
+        "diffuse_spots": classification["diffuse_spots"],
+        "n_diffuse_components": len(classification["diffuse_sizes"]) if spatial_available else np.nan,
+        "largest_diffuse_component_ratio": classification["diffuse_largest"],
+        "small_component_fraction": classification["small_fraction"],
+        "diffuse_coherence_score": classification["diffuse_fraction"] * classification["diffuse_largest"],
+        "transition_burden_score": classification["burden"],
+        "adj_same_fraction": classification["adj_same"],
+        "adj_zero_fraction": classification["adj_zero"],
+        "adj_opposite_fraction": classification["adj_opposite"],
+        "R_crossing_fraction": classification["r_crossing"],
         "C_mean": float(np.nanmean(C)), "S_mean": float(np.nanmean(S)), "R_mean": float(np.nanmean(R)),
         "R_sd": float(np.nanstd(R)), "R_dynamic_range": float(np.nanquantile(R, .9) - np.nanquantile(R, .1)),
-        "G_mean": float(np.nanmean(G)), "G_q90": float(np.nanquantile(G, .9)),
+        "G_mean": float(np.nanmean(G)) if spatial_available else np.nan,
+        "G_q90": float(np.nanquantile(G, .9)) if spatial_available else np.nan,
         "C_gene_set": ";".join(c_genes), "S_gene_set": ";".join(s_genes),
         "C_genes_present": ";".join(c_present), "S_genes_present": ";".join(s_present),
         "C_genes_missing": ";".join(c_missing), "S_genes_missing": ";".join(s_missing),
@@ -324,12 +731,32 @@ def score_h5ad(
         "C_S_overlap_genes": ";".join(overlap),
         "unique_feature_names": case_insensitive_unique,
         "interface_c_q": c_q, "interface_s_q": s_q, "interface_g_q": g_q,
+        "matrix_shape": "x".join(map(str, memory_info.get("shape") or [adata.n_obs, adata.n_vars])),
+        "matrix_sparse_dense_status": memory_info.get("matrix_storage", "unknown"),
+        "matrix_encoding": memory_info.get("matrix_encoding", "unknown"),
+        "dense_float32_GB": memory_info.get("dense_float32_gb", np.nan),
+        "dense_float64_GB": memory_info.get("dense_float64_gb", np.nan),
+        "dense_conversion_warning": bool(memory_info.get("dense_conversion_warning", False)),
+        "memory_warning": memory_info.get("warning", ""),
+        "selected_C_S_genes_extracted": int(len(all_idx)),
+        "selected_expression_dense_float64_MB": float(selected_dense64_mb),
+        **robustness,
     }
-    fields = {"coords": coords, "C": C, "S": S, "R": R, "G": G, "interface": interface, "diffuse": diffuse}
+    fields = {
+        "coords": coords, "C": C, "S": S, "R": R, "G": G,
+        "interface": classification["interface"],
+        "diffuse": classification["diffuse"],
+        "spatial_available": spatial_available,
+        "robustness_table": robustness_table,
+        "memory_info": memory_info,
+        "options": _options_to_json(options),
+    }
     return metrics, fields
 
 
 def save_spatial_map(path: str | Path, metrics: dict, fields: dict) -> Path:
+    if not fields.get("spatial_available", False) or fields.get("coords") is None:
+        raise ValueError(SPATIAL_QC_MESSAGE)
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -364,8 +791,113 @@ def save_spatial_map(path: str | Path, metrics: dict, fields: dict) -> Path:
     return output
 
 
+def write_analysis_report(path: str | Path, metrics: dict) -> Path:
+    """Write a human-readable report that separates expression and spatial availability."""
+    output = Path(path)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    expression_lines = [
+        "Expression-only results",
+        "-----------------------",
+        f"Status: {metrics.get('expression_results_status', 'available')}",
+        f"C gene coverage: {float(metrics.get('C_gene_coverage', np.nan)):.1%}",
+        f"S gene coverage: {float(metrics.get('S_gene_coverage', np.nan)):.1%}",
+        f"C mean: {float(metrics.get('C_mean', np.nan)):.6g}",
+        f"S mean: {float(metrics.get('S_mean', np.nan)):.6g}",
+        f"R mean: {float(metrics.get('R_mean', np.nan)):.6g}",
+        f"R dynamic range: {float(metrics.get('R_dynamic_range', np.nan)):.6g}",
+    ]
+    spatial_lines = ["Spatial results", "---------------"]
+    if metrics.get("spatial_qc_status") == "PASS":
+        spatial_lines.extend([
+            "Status: available",
+            f"Regime label: {metrics.get('regime_label', '')}",
+            f"Interface fraction: {float(metrics.get('interface_fraction', np.nan)):.6g}",
+            f"Diffuse fraction: {float(metrics.get('diffuse_fraction', np.nan)):.6g}",
+            f"Transition burden: {float(metrics.get('transition_burden_score', np.nan)):.6g}",
+        ])
+    else:
+        spatial_lines.extend([
+            "Status: unavailable due to missing or invalid coordinates",
+            f"Spatial QC: {metrics.get('spatial_qc_status', 'WARN')}",
+            f"Regime label: {metrics.get('regime_label', 'Spatial_QC_incomplete')}",
+            str(metrics.get("spatial_qc_message") or SPATIAL_QC_MESSAGE),
+            "No localized interface-like candidates or transition metrics were reported.",
+            "Spatial map generation was disabled for this sample.",
+        ])
+    output.write_text("\n".join(expression_lines + [""] + spatial_lines) + "\n", encoding="utf-8")
+    return output
+
+
+def write_parameter_log(
+    path: str | Path,
+    *,
+    input_file: str | Path,
+    output_folder: str | Path,
+    sample_name: str,
+    c_genes: list[str],
+    s_genes: list[str],
+    c_q: float,
+    s_q: float,
+    g_q: float,
+    options: ScoringOptions,
+    memory_info: dict,
+    metrics: dict | None = None,
+) -> Path:
+    """Write a machine-readable parameter and memory-safety log for one sample."""
+    output = Path(path)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "application": "SpatialTX Studio Desktop",
+        "software_version": __version__,
+        "timestamp": dt.datetime.now().isoformat(timespec="seconds"),
+        "input_file_path": str(Path(input_file).expanduser().resolve()),
+        "output_folder": str(Path(output_folder).expanduser().resolve()),
+        "sample_name": sample_name,
+        "C_gene_list": list(c_genes),
+        "S_gene_list": list(s_genes),
+        "smoothing": {
+            "mode": options.smoothing_mode,
+            "k": int(options.smoothing_k),
+            "gaussian_sigma": float(options.gaussian_sigma),
+            "sigma_used": None if metrics is None or pd.isna(metrics.get("smoothing_sigma_used", np.nan)) else float(metrics["smoothing_sigma_used"]),
+        },
+        "normalization_mode": options.normalization_mode,
+        "thresholds": {"C_q": float(c_q), "S_q": float(s_q), "G_q": float(g_q)},
+        "perturbation_check": bool(options.perturbation_check),
+        "perturbation_grid": {
+            "C_Q_LIST": list(options.c_q_list) if options.perturbation_check else [],
+            "S_Q_LIST": list(options.s_q_list) if options.perturbation_check else [],
+            "G_Q_LIST": list(options.g_q_list) if options.perturbation_check else [],
+        },
+        "matrix": {
+            "shape": memory_info.get("shape"),
+            "n_obs": memory_info.get("n_obs"),
+            "n_vars": memory_info.get("n_vars"),
+            "sparse_dense_status": memory_info.get("matrix_storage"),
+            "encoding": memory_info.get("matrix_encoding"),
+            "dense_float32_GB": memory_info.get("dense_float32_gb"),
+            "dense_float64_GB": memory_info.get("dense_float64_gb"),
+            "dense_conversion_warning": memory_info.get("dense_conversion_warning"),
+            "memory_warning": memory_info.get("warning"),
+        },
+        "memory_safety": {
+            "full_X_dense_conversion": "avoided",
+            "selected_C_S_genes_only": True,
+            "selected_gene_count": None if metrics is None else metrics.get("selected_C_S_genes_extracted"),
+            "selected_expression_dense_float64_MB": None if metrics is None else metrics.get("selected_expression_dense_float64_MB"),
+        },
+        "stability_interpretation": (
+            "Threshold stability is a parameter-sensitivity diagnostic only, not biological validation."
+        ),
+    }
+    output.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    return output
+
+
 def run_batch(paths: list[Path], output_root: str | Path, c_genes: list[str], s_genes: list[str],
-              progress: Progress | None = None, c_q: float = .80, s_q: float = .80, g_q: float = .60) -> tuple[Path, pd.DataFrame]:
+              progress: Progress | None = None, c_q: float = .80, s_q: float = .80, g_q: float = .60,
+              options: ScoringOptions | dict | None = None) -> tuple[Path, pd.DataFrame]:
+    options = _coerce_options(options)
     if not paths:
         raise ValueError("Select at least one h5ad sample.")
     stamp = dt.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
@@ -378,6 +910,7 @@ def run_batch(paths: list[Path], output_root: str | Path, c_genes: list[str], s_
         "C_gene_program": list(c_genes), "S_gene_program": list(s_genes),
         "interface_quantiles": {"C": c_q, "S": s_q, "G": g_q},
         "spatial_neighbors_k": 6,
+        "scoring_options": _options_to_json(options),
     }, indent=2), encoding="utf-8")
     rows: list[dict] = []
     sample_counts: dict[str, int] = {}
@@ -390,12 +923,49 @@ def run_batch(paths: list[Path], output_root: str | Path, c_genes: list[str], s_
         sample_dir = run_dir / sample_name
         sample_dir.mkdir(parents=True, exist_ok=True)
         try:
-            metrics, fields = score_h5ad(path, c_genes, s_genes, c_q, s_q, g_q)
+            memory_info = inspect_h5ad_memory(path, options.dense_warning_gb)
+            if progress:
+                shape = memory_info.get("shape") or ["?", "?"]
+                progress(
+                    f"  Matrix preflight: {shape[0]} spots x {shape[1]} genes, "
+                    f"{memory_info.get('matrix_storage', 'unknown')} storage; "
+                    f"dense64≈{float(memory_info.get('dense_float64_gb', np.nan)):.2f} GB"
+                )
+                if memory_info.get("warning"):
+                    progress(f"  Warning: {memory_info['warning']}")
+            metrics, fields = score_h5ad(path, c_genes, s_genes, c_q, s_q, g_q, options=options, preflight_info=memory_info)
             metrics["source_sample_name"] = base_name
             metrics["sample"] = sample_name
-            png = save_spatial_map(sample_dir / f"{sample_name}_spatialtx_maps.png", metrics, fields)
-            metrics["spatial_map_png"] = str(png)
+            if fields.get("spatial_available", False):
+                png = save_spatial_map(sample_dir / f"{sample_name}_spatialtx_maps.png", metrics, fields)
+                metrics["spatial_map_png"] = str(png)
+            else:
+                metrics["spatial_map_png"] = ""
+                if progress:
+                    progress(f"  {SPATIAL_QC_MESSAGE}")
+            if options.parameter_log_export:
+                parameter_log = write_parameter_log(
+                    sample_dir / "parameter_log.json",
+                    input_file=path,
+                    output_folder=run_dir,
+                    sample_name=sample_name,
+                    c_genes=c_genes,
+                    s_genes=s_genes,
+                    c_q=c_q,
+                    s_q=s_q,
+                    g_q=g_q,
+                    options=options,
+                    memory_info=fields.get("memory_info", memory_info),
+                    metrics=metrics,
+                )
+                metrics["parameter_log_json"] = str(parameter_log)
+            robustness_table = fields.get("robustness_table")
+            if isinstance(robustness_table, pd.DataFrame) and not robustness_table.empty:
+                robustness_csv = sample_dir / "robustness_perturbation.csv"
+                robustness_table.to_csv(robustness_csv, index=False)
+                metrics["robustness_perturbation_csv"] = str(robustness_csv)
             pd.DataFrame([metrics]).to_csv(sample_dir / "metrics.csv", index=False)
+            write_analysis_report(sample_dir / "analysis_report.txt", metrics)
             pd.DataFrame(
                 [{"program": "C", "gene": g} for g in c_genes] + [{"program": "S", "gene": g} for g in s_genes]
             ).to_csv(sample_dir / "selected_genes.csv", index=False)
@@ -472,6 +1042,8 @@ def optimize_genes(path: str | Path, side: str, c_genes: list[str], s_genes: lis
     if iterations < 1:
         raise ValueError("Optimizer iterations must be at least 1.")
     baseline, fields = score_h5ad(path, c_genes, s_genes)
+    if not fields.get("spatial_available", False):
+        raise ValueError(SPATIAL_QC_MESSAGE + " Spatially informed QUBO optimization is unavailable.")
     adata = _read_h5ad(path)
     genes = [str(g) for g in adata.var_names]
     lookup: dict[str, str] = {}

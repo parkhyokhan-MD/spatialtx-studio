@@ -2,6 +2,21 @@
 
 All notable public changes to SpatialTX Studio Desktop are recorded here.
 
+## v0.3-beta
+
+- Added Import / Convert workflow.
+- Moved raw input conversion out of Advanced / Experimental.
+- Added Raw 10x MEX/MTX → H5AD conversion.
+- Added Raw Visium H5 + spatial → H5AD conversion.
+- Added GEO-style duplicate-equivalent handling for uncompressed/`.gz` Visium spatial files, preferring uncompressed files with warning-level status logging.
+- Added converted H5AD validation workflow.
+- Kept Main Mapper centered on AnnData .h5ad input.
+- Added clearer separation between file preparation, core mapping, and experimental analysis tools.
+- Added strict spatial-coordinate QC with expression-only fallback and no invented spatial geometry.
+- Suppressed Type A/B/C regimes, localized interface-like candidates, transition metrics, and maps when spatial QC is incomplete.
+- Added optional smoothing, normalization, threshold perturbation, parameter logging, and memory preflight diagnostics with conservative defaults.
+- Outputs remain exploratory and are not intended for diagnosis, treatment selection, or clinical decision-making.
+
 ## 0.2-beta — 2026-07-05
 
 - Preserved the v0.1-beta Transition Mapper workflow, Cx/Sx definitions, defaults, and output contracts.

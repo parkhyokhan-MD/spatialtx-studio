@@ -1,25 +1,25 @@
-# SpatialTX Studio Desktop v0.2-beta
+# SpatialTX Studio Desktop v0.3-beta
+
+> Public source release for GitHub distribution.
 
 SpatialTX Studio Desktop is an open-source research workspace for exploratory spatial transcriptomics analysis. The release provides a local Python desktop application and command-line workflow for `.h5ad` inputs.
 
 This software is a research prototype. It is not intended for diagnosis, treatment selection, or clinical decision-making. Outputs are exploratory and require independent review and validation.
 
-## Screenshot
-
-![SpatialTX Studio Desktop](docs/images/spatialtx_desktop_screenshot.png)
-
-## v0.2-beta scope
+## v0.3-beta scope
 
 - Local Python desktop application and CLI
 - Single-sample and manifest-based batch processing
 - Fixed, adaptive, and custom C/S gene-program modes
 - Spatial C/S balance fields, transition summaries, QC reports, and maps
+- Lightweight robustness and memory-safety diagnostics with conservative defaults
 - Spot-based distance by default
 - Opt-in advanced hypothesis-generation utilities
 - A separate **Advanced Analysis** workspace for gene composition, interface enrichment, and local Cx/Sx spatial interaction
 - Reproducible CSV tables, 300-dpi PNG figures, vector PDFs, and JSON analysis metadata
+- A dedicated **Import / Convert** workspace for Raw 10x MEX/MTX and Raw Visium H5 + spatial conversion to canonical H5AD
 
-All v0.1-beta Transition Mapper functionality is retained. The fixed Cx and Sx definitions, scoring workflow, default thresholds, original CLI, and existing output contracts are unchanged.
+The established Cx and Sx definitions, scoring workflow, default thresholds, core CLI, and existing output contracts are unchanged.
 
 ## Core definitions
 
@@ -50,11 +50,24 @@ python desktop_app.py
 
 See [README_DESKTOP.md](README_DESKTOP.md) for the desktop workflow and [README_local_run.md](README_local_run.md) for local CLI examples.
 
+## Screenshot
+
+![SpatialTX Studio Desktop v0.3-beta](docs/screenshots/spatialtx_studio_desktop_v0_3_beta.png)
+
+## Import / Convert
+
+The Main Mapper remains H5AD-centered. Raw data must first be converted in **Import / Convert**, then opened in the Main Mapper like any other `.h5ad` input.
+
+- **Raw 10x MEX/MTX → H5AD**: `matrix.mtx`, `barcodes.tsv`, and `features.tsv`/`genes.tsv`, including supported `.gz` variants.
+- **Raw Visium H5 + spatial → H5AD**: `filtered_feature_bc_matrix.h5`, tissue positions, scalefactors, and optional tissue images, including supported `.gz` spatial files and GEO-style filename prefixes.
+
+Each section provides input/output selection, sample naming, conversion, H5AD validation, output-folder access, a status log, and Main Mapper handoff. Seurat RDS, h5Seurat, parquet, and generic CSV import are not supported.
+
 ## Advanced Analysis quick start
 
 In the desktop application, scan and select one or more `.h5ad` files, then open **Advanced Analysis**. The three nested tabs use the Cx/Sx genes and quantiles currently displayed in the main workspace.
 
-The new command-line entry point is separate from the v0.1 CLI:
+The Advanced Analysis command-line entry point remains separate from the core CLI:
 
 ```bash
 python advanced_cli.py --module composition --input sample.h5ad --output results
@@ -62,7 +75,7 @@ python advanced_cli.py --module enrichment --input sample.h5ad --output results
 python advanced_cli.py --module interaction --input sample.h5ad --output results --permutations 499 --seed 20260705
 ```
 
-See [RELEASE_NOTES_v0_2_beta.md](RELEASE_NOTES_v0_2_beta.md) for metric and output definitions.
+See [RELEASE_NOTES_v0_3_beta.md](RELEASE_NOTES_v0_3_beta.md) for this release. Historical notes remain in their original files.
 
 ## CLI quick start
 
@@ -84,7 +97,7 @@ Typical outputs include metrics, QC summaries, selected-gene tables, run configu
 
 ## Research-use guardrails
 
-A3-A5 are optional hypothesis-generation utilities. They do not discover or validate drug responses, receptor function, membrane localization, ligand-receptor binding, biomarkers, biological subtypes, or clinical effects. See [DISCLAIMER.md](DISCLAIMER.md) and [RELEASE_NOTES_v0_1_beta.md](RELEASE_NOTES_v0_1_beta.md).
+A3-A5 are optional hypothesis-generation utilities. They do not discover or validate drug responses, receptor function, membrane localization, ligand-receptor binding, biomarkers, biological subtypes, or clinical effects. See [DISCLAIMER.md](DISCLAIMER.md) and [RELEASE_NOTES_v0_3_beta.md](RELEASE_NOTES_v0_3_beta.md).
 
 
 ## Development note

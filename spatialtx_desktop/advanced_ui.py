@@ -12,14 +12,10 @@ from .advanced import (
     build_ligrec_skeleton,
     build_read_evidence_plan,
     compare_pre_post,
-    convert_mex,
     export_fasta_template,
     export_qubo_pool,
     filter_receptor_membrane,
-    find_mex_folders,
-    inspect_mex,
     scan_pre_post_pairs,
-    validate_h5ad,
 )
 
 
@@ -27,10 +23,7 @@ class AdvancedToolsPanel(ttk.Frame):
     def __init__(self, parent, on_qubo_pool=None) -> None:
         super().__init__(parent)
         self.on_qubo_pool = on_qubo_pool
-        self.mex_folders: list[Path] = []
         self.latest_table: Path | None = None
-        self.raw_pre = tk.StringVar()
-        self.raw_post = tk.StringVar()
         self.pre_h5ad = tk.StringVar()
         self.post_h5ad = tk.StringVar()
         self.input_table = tk.StringVar()
@@ -49,18 +42,20 @@ class AdvancedToolsPanel(ttk.Frame):
         ttk.Label(header, text="Output folder").pack(side="left", padx=(18, 5))
         ttk.Entry(header, textvariable=self.output_var).pack(side="left", fill="x", expand=True)
         ttk.Button(header, text="Browse...", command=self._browse_output).pack(side="left", padx=(5, 0))
+        ttk.Label(
+            self,
+            text="Raw data import has moved to Import / Convert.",
+            foreground="#155e75",
+        ).pack(anchor="w", pady=(7, 0))
 
         self.body = ttk.Frame(self)
         self.body.pack(fill="both", expand=True, pady=(8, 0))
         self.tabs = ttk.Notebook(self.body)
         self.tabs.pack(fill="both", expand=True)
-        raw = ttk.Frame(self.tabs, padding=10)
         candidates = ttk.Frame(self.tabs, padding=10)
         utilities = ttk.Frame(self.tabs, padding=10)
-        self.tabs.add(raw, text="A  Raw MEX to h5ad")
-        self.tabs.add(candidates, text="B  Pre/Post comparison")
-        self.tabs.add(utilities, text="C  Ligand/Receptor utilities")
-        self._build_raw(raw)
+        self.tabs.add(candidates, text="Hypothesis Generation")
+        self.tabs.add(utilities, text="Ligand/Receptor Utilities")
         self._build_candidates(candidates)
         self._build_utilities(utilities)
 
@@ -70,32 +65,6 @@ class AdvancedToolsPanel(ttk.Frame):
         self.progress.pack(side="left")
         self.status = ttk.Label(footer, text="Advanced tools are disabled.", foreground="#7c2d12")
         self.status.pack(side="left", padx=10)
-
-    def _build_raw(self, parent) -> None:
-        scan = ttk.LabelFrame(parent, text="A0B  Raw folder scan", padding=8)
-        scan.pack(fill="x")
-        self.raw_root = tk.StringVar()
-        ttk.Entry(scan, textvariable=self.raw_root).pack(side="left", fill="x", expand=True)
-        ttk.Button(scan, text="Root...", command=self._browse_raw_root).pack(side="left", padx=5)
-        ttk.Button(scan, text="Scan MEX folders", command=self._scan_mex).pack(side="left")
-        self.raw_tree = ttk.Treeview(parent, columns=("folder",), show="headings", height=7, selectmode="browse")
-        self.raw_tree.heading("folder", text="Complete 10x MEX folders")
-        self.raw_tree.column("folder", width=700)
-        self.raw_tree.pack(fill="both", expand=True, pady=(8, 0))
-        setrow = ttk.Frame(parent); setrow.pack(fill="x", pady=(6, 0))
-        ttk.Button(setrow, text="Set selected folder -> Raw pre", command=lambda: self._set_raw("pre")).pack(side="left")
-        ttk.Button(setrow, text="Set selected folder -> Raw post", command=lambda: self._set_raw("post")).pack(side="left", padx=5)
-        ttk.Button(setrow, text="A0  Inspect selected", command=self._inspect_selected).pack(side="left")
-        paths = ttk.LabelFrame(parent, text="Selected raw folders", padding=8); paths.pack(fill="x", pady=(8, 0))
-        ttk.Label(paths, text="Pre").grid(row=0, column=0, sticky="w"); ttk.Entry(paths, textvariable=self.raw_pre).grid(row=0, column=1, sticky="ew", padx=5)
-        ttk.Label(paths, text="Post").grid(row=1, column=0, sticky="w"); ttk.Entry(paths, textvariable=self.raw_post).grid(row=1, column=1, sticky="ew", padx=5, pady=(4, 0))
-        paths.columnconfigure(1, weight=1)
-        actions = ttk.Frame(parent); actions.pack(fill="x", pady=(8, 0))
-        ttk.Button(actions, text="A2  Convert pre", command=lambda: self._convert("pre")).pack(side="left")
-        ttk.Button(actions, text="A2  Convert post", command=lambda: self._convert("post")).pack(side="left", padx=5)
-        ttk.Button(actions, text="A2B  Validate h5ad...", command=self._validate_file).pack(side="left")
-        self.raw_report = tk.Text(parent, height=7, wrap="word", state="disabled", background="#f8fafc")
-        self.raw_report.pack(fill="x", pady=(8, 0))
 
     def _build_candidates(self, parent) -> None:
         guide = ttk.LabelFrame(parent, text="A3 -> A4 -> A5  Optional hypothesis-generation workflow", padding=9)
@@ -234,42 +203,10 @@ class AdvancedToolsPanel(ttk.Frame):
 
     def _browse_output(self):
         value = filedialog.askdirectory(title="Advanced output folder"); self.output_var.set(value or self.output_var.get())
-    def _browse_raw_root(self):
-        value = filedialog.askdirectory(title="Raw 10x root folder"); self.raw_root.set(value or self.raw_root.get())
     def _browse_pair_root(self):
         value = filedialog.askdirectory(title="Folder containing pre/post h5ad files"); self.pair_root.set(value or self.pair_root.get())
     def _browse_table(self):
         value = filedialog.askopenfilename(title="Select candidate CSV", filetypes=[("CSV", "*.csv")]); self.input_table.set(value or self.input_table.get())
-
-    def _scan_mex(self):
-        root = self.raw_root.get()
-        self._background("Raw folder scan", lambda: find_mex_folders(root), self._show_mex)
-    def _show_mex(self, folders):
-        self.mex_folders = folders; self.raw_tree.delete(*self.raw_tree.get_children())
-        for i, folder in enumerate(folders): self.raw_tree.insert("", "end", iid=str(i), values=(str(folder),))
-        self._write(self.raw_report, f"Found {len(folders)} complete MEX folder(s).")
-    def _selected_mex(self) -> Path:
-        selected = self.raw_tree.selection()
-        if not selected: raise ValueError("Select a scanned MEX folder first.")
-        return self.mex_folders[int(selected[0])]
-    def _set_raw(self, stage):
-        try: (self.raw_pre if stage == "pre" else self.raw_post).set(str(self._selected_mex()))
-        except Exception as exc: messagebox.showwarning("Raw folder", str(exc), parent=self)
-    def _inspect_selected(self):
-        try: folder = self._selected_mex()
-        except Exception as exc: messagebox.showwarning("Inspect", str(exc), parent=self); return
-        self._background("MEX inspection", lambda: inspect_mex(folder), lambda report: self._write(self.raw_report, "\n".join(f"{k}: {v}" for k, v in report.items())))
-    def _convert(self, stage):
-        source = self.raw_pre.get() if stage == "pre" else self.raw_post.get()
-        if not source: messagebox.showwarning("Convert", f"Set the raw {stage} folder first.", parent=self); return
-        output = self._new_output(f"{Path(source).name}_{stage}.h5ad")
-        def done(result):
-            path, report = result; (self.pre_h5ad if stage == "pre" else self.post_h5ad).set(str(path)); self.pair_root.set(str(path.parent))
-            self._write(self.raw_report, "\n".join(f"{k}: {v}" for k, v in report.items()))
-        self._background(f"Convert raw {stage}", lambda: convert_mex(source, output), done)
-    def _validate_file(self):
-        path = filedialog.askopenfilename(title="Validate h5ad", filetypes=[("h5ad", "*.h5ad")])
-        if path: self._background("h5ad validation", lambda: validate_h5ad(path), lambda report: self._write(self.raw_report, "\n".join(f"{k}: {v}" for k, v in report.items())))
 
     def _scan_pairs(self):
         root = self.pair_root.get()

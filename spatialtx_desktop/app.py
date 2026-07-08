@@ -10,9 +10,12 @@ from tkinter import filedialog, messagebox, ttk
 from . import APP_NAME, AUTHOR, BUILD_DATE, __version__
 from .advanced_analysis_ui import AdvancedAnalysisPanel
 from .advanced_ui import AdvancedToolsPanel
+from .importers.import_panel import ImportConvertPanel
 from .workflow import (
     DEFAULT_C_GENES,
     DEFAULT_S_GENES,
+    ScoringOptions,
+    SPATIAL_QC_MESSAGE,
     export_result,
     optimize_genes,
     parse_gene_text,
@@ -70,6 +73,7 @@ class SpatialTXDesktop(tk.Tk):
         self.right_tabs = ttk.Notebook(right)
         self.right_tabs.pack(fill="both", expand=True)
         analysis_tab = ttk.Frame(self.right_tabs, padding=10)
+        import_tab = ttk.Frame(self.right_tabs, padding=10)
         map_tab = ttk.Frame(self.right_tabs, padding=10)
         qubo_tab = ttk.Frame(self.right_tabs, padding=10)
         theory_tab = ttk.Frame(self.right_tabs, padding=10)
@@ -77,15 +81,17 @@ class SpatialTXDesktop(tk.Tk):
         about_tab = ttk.Frame(self.right_tabs, padding=10)
         advanced_tab = ttk.Frame(self.right_tabs, padding=10)
         advanced_analysis_tab = ttk.Frame(self.right_tabs, padding=10)
-        self.right_tabs.add(analysis_tab, text="Analysis")
+        self.right_tabs.add(analysis_tab, text="Main Mapper")
+        self.right_tabs.add(import_tab, text="Import / Convert")
         self.right_tabs.add(map_tab, text="Map Viewer")
         self.right_tabs.add(qubo_tab, text="QUBO Optimizer")
         self.right_tabs.add(theory_tab, text="Theory & Metrics")
         self.right_tabs.add(interpretation_tab, text="Interpretation")
         self.right_tabs.add(advanced_analysis_tab, text="Advanced Analysis")
-        self.right_tabs.add(advanced_tab, text="Advanced Tools")
+        self.right_tabs.add(advanced_tab, text="Advanced / Experimental")
         self.right_tabs.add(about_tab, text="About & Version")
         self.interpretation_tab = interpretation_tab
+        self.analysis_tab = analysis_tab
 
         source = ttk.LabelFrame(left, text="1  Input and samples", padding=10)
         source.pack(fill="both", expand=True)
@@ -138,6 +144,60 @@ class SpatialTXDesktop(tk.Tk):
             ttk.Label(box, text=label).pack(anchor="w")
             ttk.Entry(box, textvariable=var, width=9).pack(fill="x")
             qrow.columnconfigure(index, weight=1)
+
+        robust_box = ttk.LabelFrame(settings, text="Optional robustness and memory diagnostics", padding=8)
+        robust_box.pack(fill="x", pady=(9, 0))
+        self.smoothing_mode = tk.StringVar(value="none")
+        self.normalization_mode = tk.StringVar(value="raw_mean")
+        self.smoothing_k = tk.IntVar(value=6)
+        self.gaussian_sigma = tk.StringVar(value="0")
+        self.perturbation_check = tk.BooleanVar(value=False)
+        self.parameter_log_export = tk.BooleanVar(value=True)
+        robust_grid = ttk.Frame(robust_box)
+        robust_grid.pack(fill="x")
+        ttk.Label(robust_grid, text="Smoothing").grid(row=0, column=0, sticky="w")
+        ttk.Combobox(
+            robust_grid,
+            textvariable=self.smoothing_mode,
+            values=("none", "knn_mean", "gaussian"),
+            state="readonly",
+            width=12,
+        ).grid(row=1, column=0, sticky="ew")
+        ttk.Label(robust_grid, text="Normalization").grid(row=0, column=1, sticky="w", padx=(7, 0))
+        ttk.Combobox(
+            robust_grid,
+            textvariable=self.normalization_mode,
+            values=("raw_mean", "z_score", "rank_quantile"),
+            state="readonly",
+            width=14,
+        ).grid(row=1, column=1, sticky="ew", padx=(7, 0))
+        ttk.Label(robust_grid, text="kNN k").grid(row=0, column=2, sticky="w", padx=(7, 0))
+        ttk.Spinbox(robust_grid, from_=1, to=50, textvariable=self.smoothing_k, width=7).grid(row=1, column=2, sticky="ew", padx=(7, 0))
+        ttk.Label(robust_grid, text="Gaussian sigma").grid(row=0, column=3, sticky="w", padx=(7, 0))
+        ttk.Entry(robust_grid, textvariable=self.gaussian_sigma, width=10).grid(row=1, column=3, sticky="ew", padx=(7, 0))
+        for column in range(4):
+            robust_grid.columnconfigure(column, weight=1)
+        check_row = ttk.Frame(robust_box)
+        check_row.pack(fill="x", pady=(6, 0))
+        ttk.Checkbutton(
+            check_row,
+            text="Run threshold perturbation check",
+            variable=self.perturbation_check,
+        ).pack(side="left")
+        ttk.Checkbutton(
+            check_row,
+            text="Export parameter log",
+            variable=self.parameter_log_export,
+        ).pack(side="left", padx=(12, 0))
+        ttk.Label(
+            robust_box,
+            text=(
+                "Defaults preserve the existing Main Mapper result. Perturbation stability is a parameter-sensitivity "
+                "diagnostic only, not biological validation. Sigma 0 uses an automatic nearest-neighbor scale."
+            ),
+            style="Sub.TLabel",
+            wraplength=650,
+        ).pack(anchor="w", fill="x", pady=(5, 0))
         outrow = ttk.Frame(settings); outrow.pack(fill="x", pady=(10, 0))
         self.output_var = tk.StringVar(value=str(Path.cwd() / "desktop_results"))
         ttk.Entry(outrow, textvariable=self.output_var).pack(side="left", fill="x", expand=True)
@@ -165,6 +225,11 @@ class SpatialTXDesktop(tk.Tk):
         self._build_about_tab(about_tab)
         self._build_qubo_tab(qubo_tab)
         self._build_map_tab(map_tab)
+        self.import_convert_panel = ImportConvertPanel(
+            import_tab,
+            on_use_in_mapper=self._open_converted_folder,
+        )
+        self.import_convert_panel.pack(fill="both", expand=True)
         self.advanced_analysis_panel = AdvancedAnalysisPanel(
             advanced_analysis_tab,
             get_samples=self._selected,
@@ -173,7 +238,8 @@ class SpatialTXDesktop(tk.Tk):
             get_output=lambda: self.output_var.get(),
         )
         self.advanced_analysis_panel.pack(fill="both", expand=True)
-        AdvancedToolsPanel(advanced_tab, on_qubo_pool=self._set_advanced_qubo_pool).pack(fill="both", expand=True)
+        self.advanced_tools_panel = AdvancedToolsPanel(advanced_tab, on_qubo_pool=self._set_advanced_qubo_pool)
+        self.advanced_tools_panel.pack(fill="both", expand=True)
 
     def _build_qubo_tab(self, parent: ttk.Frame) -> None:
         canvas = tk.Canvas(parent, highlightthickness=0)
@@ -278,8 +344,8 @@ class SpatialTXDesktop(tk.Tk):
         details = [
             ("Creator", AUTHOR),
             ("Version", f"v{__version__}"),
-            ("Release date", BUILD_DATE),
-            ("Edition", "v0.2-beta quantitative analysis extension"),
+            ("Build date", BUILD_DATE),
+            ("Edition", "v0.3-beta Import / Convert and robustness diagnostics"),
         ]
         for row, (label, value) in enumerate(details):
             ttk.Label(card, text=label, font=("Segoe UI Semibold", 9)).grid(row=row, column=0, sticky="nw", pady=4)
@@ -295,7 +361,9 @@ class SpatialTXDesktop(tk.Tk):
                 "It scores immune-side C(x) and stromal-side S(x) gene programs, constructs the balance field "
                 "R(x)=C(x)-S(x), estimates its local spatial gradient G(x), and generates exploratory interface and diffuse-transition "
                 "calls. Advanced Analysis adds gene composition, interface enrichment, and local spatial interaction outputs without "
-                "changing the Cx/Sx definitions. The desktop edition also retains the fixed-cardinality QUBO-inspired optimizer.\n\n"
+                "changing the Cx/Sx definitions. Import / Convert prepares supported Raw 10x MEX/MTX and Raw Visium H5 + spatial "
+                "inputs as canonical H5AD before Main Mapper analysis. The desktop edition also retains the fixed-cardinality "
+                "QUBO-inspired optimizer.\n\n"
                 "Operational regime labels are exploratory candidates and are not validated biological subtypes."
             ),
             wraplength=430, justify="left",
@@ -314,10 +382,14 @@ class SpatialTXDesktop(tk.Tk):
         self.map_combo = ttk.Combobox(toolbar, textvariable=self.map_sample_var, state="readonly", width=28)
         self.map_combo.pack(side="left", padx=6)
         self.map_combo.bind("<<ComboboxSelected>>", lambda _event: self._display_selected_map())
-        ttk.Button(toolbar, text="Previous", command=lambda: self._step_map(-1)).pack(side="left")
-        ttk.Button(toolbar, text="Next", command=lambda: self._step_map(1)).pack(side="left", padx=5)
-        ttk.Button(toolbar, text="Fit to window", command=self._display_selected_map).pack(side="left")
-        ttk.Button(toolbar, text="Open externally", command=self._open_viewer_map).pack(side="right")
+        self.map_previous_button = ttk.Button(toolbar, text="Previous", command=lambda: self._step_map(-1), state="disabled")
+        self.map_previous_button.pack(side="left")
+        self.map_next_button = ttk.Button(toolbar, text="Next", command=lambda: self._step_map(1), state="disabled")
+        self.map_next_button.pack(side="left", padx=5)
+        self.map_fit_button = ttk.Button(toolbar, text="Fit to window", command=self._display_selected_map, state="disabled")
+        self.map_fit_button.pack(side="left")
+        self.map_external_button = ttk.Button(toolbar, text="Open externally", command=self._open_viewer_map, state="disabled")
+        self.map_external_button.pack(side="right")
         self.map_canvas = tk.Canvas(parent, background="#111827", highlightthickness=0)
         self.map_canvas.pack(fill="both", expand=True, pady=(8, 0))
         self.map_canvas.create_text(20, 20, anchor="nw", fill="#cbd5e1", text="Run SpatialTX scoring to view generated maps here.", tags="placeholder")
@@ -334,8 +406,21 @@ class SpatialTXDesktop(tk.Tk):
                     names.append(str(row.get("sample", path.stem)))
         self.map_combo.configure(values=names)
         if names:
+            self.map_combo.configure(state="readonly")
+            for button in (self.map_previous_button, self.map_next_button, self.map_fit_button, self.map_external_button):
+                button.configure(state="normal")
             self.map_combo.current(0)
             self._display_selected_map()
+        else:
+            self.map_sample_var.set("")
+            self.map_combo.configure(state="disabled")
+            for button in (self.map_previous_button, self.map_next_button, self.map_fit_button, self.map_external_button):
+                button.configure(state="disabled")
+            self.map_canvas.delete("all")
+            self.map_canvas.create_text(
+                20, 20, anchor="nw", fill="#cbd5e1",
+                text="No spatial map is available. Samples with incomplete spatial QC retain expression-only results.",
+            )
 
     def _display_selected_map(self) -> None:
         if not self.map_paths or not hasattr(self, "map_canvas"):
@@ -454,7 +539,10 @@ class SpatialTXDesktop(tk.Tk):
         self.result_tree.bind("<<TreeviewSelect>>", self._on_result_selected)
         actions = ttk.Frame(parent)
         actions.pack(fill="x", pady=(6, 0))
-        ttk.Button(actions, text="Open selected map", command=self._open_selected_map).pack(side="left")
+        self.open_selected_map_button = ttk.Button(
+            actions, text="Open selected map", command=self._open_selected_map, state="disabled"
+        )
+        self.open_selected_map_button.pack(side="left")
         ttk.Button(actions, text="Open results folder", command=self._open_results).pack(side="left", padx=6)
         self.interpret_text = tk.Text(parent, wrap="word", height=16, state="disabled", background="#f8fafc", padx=10, pady=8)
         self.interpret_text.pack(fill="both", expand=True, pady=(8, 0))
@@ -470,6 +558,15 @@ class SpatialTXDesktop(tk.Tk):
         folder = filedialog.askdirectory(title="Select results folder")
         if folder:
             self.output_var.set(folder)
+
+    def _open_converted_folder(self, folder: Path) -> None:
+        """Hand a converted h5ad folder to the unchanged Main Mapper scanner."""
+        self.input_var.set(str(Path(folder)))
+        self._scan()
+        children = self.sample_tree.get_children()
+        if children:
+            self.sample_tree.selection_set(children)
+        self.right_tabs.select(self.analysis_tab)
 
     def _scan(self) -> None:
         try:
@@ -500,6 +597,22 @@ class SpatialTXDesktop(tk.Tk):
             raise ValueError("C, S and G quantiles must be between 0 and 1.")
         return values
 
+    def _scoring_options(self) -> ScoringOptions:
+        sigma = float(self.gaussian_sigma.get().strip() or "0")
+        if sigma < 0:
+            raise ValueError("Gaussian sigma must be zero or positive.")
+        smoothing_k = int(self.smoothing_k.get())
+        if smoothing_k < 1:
+            raise ValueError("Smoothing k must be at least 1.")
+        return ScoringOptions(
+            smoothing_mode=self.smoothing_mode.get(),
+            smoothing_k=smoothing_k,
+            gaussian_sigma=sigma,
+            normalization_mode=self.normalization_mode.get(),
+            perturbation_check=bool(self.perturbation_check.get()),
+            parameter_log_export=bool(self.parameter_log_export.get()),
+        )
+
     def _background(self, function) -> None:
         self.busy = True
         self.progress.start(12)
@@ -515,6 +628,7 @@ class SpatialTXDesktop(tk.Tk):
             messagebox.showinfo("SpatialTX is busy", "Wait for the current job to finish.", parent=self); return
         try:
             selected, (c, s), quantiles = self._selected(), self._genes(), self._quantiles()
+            scoring_options = self._scoring_options()
             if not selected:
                 raise ValueError("Select at least one sample in the scan table.")
             output = self.output_var.get().strip()
@@ -525,7 +639,15 @@ class SpatialTXDesktop(tk.Tk):
 
         def work():
             try:
-                run_dir, summary = run_batch(selected, output, c, s, lambda m: self.messages.put(("log", m)), *quantiles)
+                run_dir, summary = run_batch(
+                    selected,
+                    output,
+                    c,
+                    s,
+                    lambda m: self.messages.put(("log", m)),
+                    *quantiles,
+                    options=scoring_options,
+                )
                 self.messages.put(("run_done", (run_dir, summary)))
             except Exception as exc:
                 self.messages.put(("error", ("SpatialTX run failed", exc)))
@@ -608,6 +730,11 @@ class SpatialTXDesktop(tk.Tk):
             status = str(row.get("status", ""))
             if status != "ok":
                 values = (row.get("sample", ""), "ERROR", "FAIL", "-", "-", "-", "-")
+            elif str(row.get("spatial_qc_status", "PASS")) != "PASS":
+                values = (
+                    row.get("sample", ""), "Spatial_QC_incomplete", row.get("QC_flag", "WARN"),
+                    "-", "-", "-", "-",
+                )
             else:
                 values = (
                     row.get("sample", ""), row.get("regime_label", ""), row.get("QC_flag", ""),
@@ -634,11 +761,33 @@ class SpatialTXDesktop(tk.Tk):
         row = self.last_summary.reset_index(drop=True).iloc[index]
         status = str(row.get("status", ""))
         if status != "ok":
+            self.open_selected_map_button.configure(state="disabled")
             self._set_interpretation_text(
                 f"{row.get('sample', 'Sample')} could not be interpreted because scoring failed.\n\n{status}\n\n"
                 "Review the run log, gene presence, and spatial coordinates in the input h5ad."
             )
             return
+        spatial_qc_status = str(row.get("spatial_qc_status", "PASS"))
+        if spatial_qc_status != "PASS":
+            self.open_selected_map_button.configure(state="disabled")
+            c_cov = self._number(row, "C_gene_coverage")
+            s_cov = self._number(row, "S_gene_coverage")
+            self._set_interpretation_text(
+                f"{row.get('sample', 'Sample')} — Spatial_QC_incomplete\n\n"
+                "Expression-only results\n"
+                "-----------------------\n"
+                "Expression scoring completed.\n"
+                f"C/S gene coverage: {c_cov:.0%} / {s_cov:.0%}\n"
+                f"R dynamic range: {self._number(row, 'R_dynamic_range'):.3f}\n\n"
+                "Spatial results\n"
+                "---------------\n"
+                f"Spatial QC: {spatial_qc_status}\n"
+                f"{SPATIAL_QC_MESSAGE}\n\n"
+                "No Type A/B/C spatial regime, localized interface-like candidates, transition metrics, or spatial map were generated."
+            )
+            return
+        map_path = Path(str(row.get("spatial_map_png", "")))
+        self.open_selected_map_button.configure(state="normal" if map_path.is_file() else "disabled")
         regime = str(row.get("regime_label", "Unclassified"))
         regime_text = {
             "Type_A_candidate": (
@@ -702,6 +851,9 @@ class SpatialTXDesktop(tk.Tk):
         if not selection or self.last_summary is None:
             messagebox.showinfo("Spatial map", "Select a completed sample first.", parent=self); return
         row = self.last_summary.reset_index(drop=True).iloc[int(selection[0])]
+        if str(row.get("spatial_qc_status", "PASS")) != "PASS":
+            messagebox.showwarning("Spatial map unavailable", SPATIAL_QC_MESSAGE, parent=self)
+            return
         path = Path(str(row.get("spatial_map_png", "")))
         if not path.is_file():
             messagebox.showerror("Spatial map", f"Map file was not found:\n{path}", parent=self); return

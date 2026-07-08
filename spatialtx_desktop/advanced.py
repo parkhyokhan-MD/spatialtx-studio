@@ -1,16 +1,11 @@
 from __future__ import annotations
 
-import gzip
 import re
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
-
-MEX_NAMES = ("matrix.mtx", "matrix.mtx.gz")
-FEATURE_NAMES = ("features.tsv", "features.tsv.gz", "genes.tsv", "genes.tsv.gz")
-BARCODE_NAMES = ("barcodes.tsv", "barcodes.tsv.gz")
 
 KNOWN_RECEPTORS = {
     "EGFR", "ERBB2", "ERBB3", "ERBB4", "MET", "AXL", "PDGFRA", "PDGFRB", "FGFR1", "FGFR2",
@@ -22,148 +17,6 @@ KNOWN_LIGANDS = {
     "TGFB1", "TGFB2", "IL6", "IL10", "IFNG", "TNF", "CXCL9", "CXCL10", "CXCL12", "CCL2", "CCL5",
     "CD274", "FASLG", "SPP1", "GAS6", "WNT5A",
 }
-
-
-def _first(directory: Path, names: tuple[str, ...]) -> Path | None:
-    for name in names:
-        path = directory / name
-        if path.is_file():
-            return path
-    return None
-
-
-def _open_text(path: Path):
-    return gzip.open(path, "rt", encoding="utf-8") if path.suffix.lower() == ".gz" else path.open("r", encoding="utf-8")
-
-
-def _mex_files(directory: str | Path) -> tuple[Path, Path, Path]:
-    folder = Path(directory)
-    matrix, features, barcodes = _first(folder, MEX_NAMES), _first(folder, FEATURE_NAMES), _first(folder, BARCODE_NAMES)
-    if not all((matrix, features, barcodes)):
-        raise ValueError(f"Not a complete 10x MEX folder: {folder}")
-    return matrix, features, barcodes
-
-
-def find_mex_folders(root: str | Path) -> list[Path]:
-    base = Path(root).expanduser()
-    if not base.is_dir():
-        raise ValueError(f"Raw root folder does not exist: {base}")
-    folders: list[Path] = []
-    for directory in [base, *(path for path in base.rglob("*") if path.is_dir())]:
-        if _first(directory, MEX_NAMES) and _first(directory, FEATURE_NAMES) and _first(directory, BARCODE_NAMES):
-            folders.append(directory.resolve())
-    return sorted(set(folders), key=lambda path: str(path).lower())
-
-
-def inspect_mex(directory: str | Path) -> dict:
-    from scipy.io import mmread
-
-    matrix_path, feature_path, barcode_path = _mex_files(directory)
-    matrix = mmread(matrix_path)
-    with _open_text(feature_path) as handle:
-        features = pd.read_csv(handle, sep="\t", header=None)
-    with _open_text(barcode_path) as handle:
-        barcodes = pd.read_csv(handle, sep="\t", header=None)
-    shape = tuple(matrix.shape)
-    orientation = "genes_x_barcodes" if shape == (len(features), len(barcodes)) else "barcodes_x_genes" if shape == (len(barcodes), len(features)) else "mismatch"
-    return {
-        "folder": str(Path(directory).resolve()), "matrix": matrix_path.name, "features": feature_path.name,
-        "barcodes": barcode_path.name, "matrix_rows": shape[0], "matrix_columns": shape[1],
-        "feature_rows": len(features), "barcode_rows": len(barcodes), "orientation": orientation,
-        "nonzero_entries": int(matrix.nnz) if hasattr(matrix, "nnz") else int(np.count_nonzero(matrix)),
-    }
-
-
-def _unique_names(values: list[str]) -> list[str]:
-    counts: dict[str, int] = {}
-    result: list[str] = []
-    for value in values:
-        name = value or "unnamed_gene"
-        number = counts.get(name, 0)
-        result.append(name if number == 0 else f"{name}-{number}")
-        counts[name] = number + 1
-    return result
-
-
-def _attach_positions(adata, mex_folder: Path) -> str:
-    candidates = [
-        mex_folder / "spatial" / "tissue_positions.csv", mex_folder / "spatial" / "tissue_positions_list.csv",
-        mex_folder.parent / "spatial" / "tissue_positions.csv", mex_folder.parent / "spatial" / "tissue_positions_list.csv",
-    ]
-    path = next((candidate for candidate in candidates if candidate.is_file()), None)
-    if path is None:
-        return "not_found"
-    if path.name == "tissue_positions_list.csv":
-        positions = pd.read_csv(path, header=None, names=["barcode", "in_tissue", "array_row", "array_col", "pxl_row_in_fullres", "pxl_col_in_fullres"])
-    else:
-        positions = pd.read_csv(path)
-        first = positions.columns[0]
-        if first != "barcode":
-            positions = positions.rename(columns={first: "barcode"})
-    positions["barcode"] = positions["barcode"].astype(str)
-    positions = positions.set_index("barcode")
-    for column in positions.columns:
-        adata.obs[column] = positions[column].reindex(adata.obs_names).to_numpy()
-    if {"pxl_col_in_fullres", "pxl_row_in_fullres"}.issubset(adata.obs.columns):
-        coords = adata.obs[["pxl_col_in_fullres", "pxl_row_in_fullres"]].to_numpy(dtype=float)
-        if np.isfinite(coords).all():
-            adata.obsm["spatial"] = coords
-    elif {"array_col", "array_row"}.issubset(adata.obs.columns):
-        coords = adata.obs[["array_col", "array_row"]].to_numpy(dtype=float)
-        if np.isfinite(coords).all():
-            adata.obsm["spatial"] = coords
-    return str(path)
-
-
-def convert_mex(directory: str | Path, output_h5ad: str | Path) -> tuple[Path, dict]:
-    import anndata as ad
-    from scipy import sparse
-    from scipy.io import mmread
-
-    folder = Path(directory).resolve()
-    matrix_path, feature_path, barcode_path = _mex_files(folder)
-    with _open_text(feature_path) as handle:
-        features = pd.read_csv(handle, sep="\t", header=None)
-    with _open_text(barcode_path) as handle:
-        barcodes = pd.read_csv(handle, sep="\t", header=None)
-    matrix = sparse.csr_matrix(mmread(matrix_path))
-    if matrix.shape == (len(features), len(barcodes)):
-        matrix = matrix.T.tocsr()
-    elif matrix.shape != (len(barcodes), len(features)):
-        raise ValueError(f"MEX dimension mismatch: matrix={matrix.shape}, features={len(features)}, barcodes={len(barcodes)}")
-    gene_names = features.iloc[:, 1 if features.shape[1] > 1 else 0].fillna("").astype(str).tolist()
-    var_names = _unique_names(gene_names)
-    obs = pd.DataFrame(index=pd.Index(barcodes.iloc[:, 0].astype(str), name="barcode"))
-    var = pd.DataFrame(index=pd.Index(var_names, name="gene"))
-    var["gene_id"] = features.iloc[:, 0].astype(str).to_numpy()
-    if features.shape[1] > 2:
-        var["feature_type"] = features.iloc[:, 2].astype(str).to_numpy()
-    adata = ad.AnnData(X=matrix, obs=obs, var=var)
-    position_source = _attach_positions(adata, folder)
-    adata.uns["spatialtx_raw_source"] = str(folder)
-    adata.uns["spatialtx_position_source"] = position_source
-    output = Path(output_h5ad).resolve()
-    output.parent.mkdir(parents=True, exist_ok=True)
-    adata.write_h5ad(output)
-    report = validate_h5ad(output)
-    report["position_source"] = position_source
-    return output, report
-
-
-def validate_h5ad(path: str | Path) -> dict:
-    import anndata as ad
-
-    file_path = Path(path).resolve()
-    adata = ad.read_h5ad(file_path, backed="r")
-    try:
-        return {
-            "path": str(file_path), "valid": True, "n_spots": int(adata.n_obs), "n_genes": int(adata.n_vars),
-            "has_spatial_coordinates": "spatial" in adata.obsm, "unique_obs_names": bool(adata.obs_names.is_unique),
-            "unique_var_names": bool(adata.var_names.is_unique), "matrix_type": type(adata.X).__name__,
-        }
-    finally:
-        if getattr(adata, "file", None):
-            adata.file.close()
 
 
 def scan_pre_post_pairs(folder: str | Path) -> pd.DataFrame:

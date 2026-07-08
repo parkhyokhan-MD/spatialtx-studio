@@ -1,6 +1,6 @@
 # Third-Party Software Notices
 
-SpatialTX Studio Desktop v0.1-beta is licensed under Apache-2.0. It uses third-party open-source software under its own licenses.
+SpatialTX Studio Desktop v0.3-beta is licensed under Apache-2.0. It uses third-party open-source software under its own licenses.
 
 ## Direct Python dependencies
 
