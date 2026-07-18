@@ -60,17 +60,9 @@ See [README_DESKTOP.md](README_DESKTOP.md) for the desktop workflow and [README_
 
 ## Screenshot
 
-Main Mapper:
+![SpatialTX Studio Desktop v0.4-beta](docs/screenshots/spatialtx_studio_desktop_v0_4_beta.png)
 
-![SpatialTX Studio Desktop v0.4-beta Main Mapper](docs/screenshots/spatialtx_studio_desktop_v0_4_beta_main_mapper.png)
-
-Import / Convert:
-
-![SpatialTX Studio Desktop v0.4-beta Import and Convert](docs/screenshots/spatialtx_studio_desktop_v0_4_beta_import_convert.png)
-
-Advanced Analysis → Spatial Graph & Neighborhood — Experimental:
-
-![SpatialTX Studio Desktop v0.4-beta Spatial Graph Experimental](docs/screenshots/spatialtx_studio_desktop_v0_4_beta.png)
+SpatialTX Studio displays C-side and S-side expression fields, the C−S balance field, local gradients, localized interface-like candidates, and diffuse-transition patterns.
 
 ## Import / Convert
 
