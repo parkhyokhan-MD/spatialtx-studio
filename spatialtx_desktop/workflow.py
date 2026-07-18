@@ -14,10 +14,19 @@ import numpy as np
 import pandas as pd
 
 from . import __version__
+from .gene_program_validation import (
+    normalize_gene_list,
+    validate_gene_programs,
+)
 
 
 DEFAULT_C_GENES = ["CD8A", "CD8B", "NKG7", "PRF1", "GZMB", "IFNG"]
 DEFAULT_S_GENES = ["COL1A1", "COL1A2", "COL3A1", "FN1", "LUM", "DCN"]
+_DEFAULT_GENE_PROGRAM_VALIDATION = validate_gene_programs(
+    DEFAULT_C_GENES,
+    DEFAULT_S_GENES,
+    mode="fixed",
+)
 
 C_MARKERS = [
     "CD3D", "CD3E", "CD2", "TRAC", "CD8A", "CD8B", "NKG7", "PRF1", "GZMB",
@@ -95,19 +104,7 @@ SPATIAL_QC_MESSAGE = (
 
 
 def parse_gene_text(text: str | Iterable[str]) -> list[str]:
-    if not isinstance(text, str):
-        values = list(text)
-    else:
-        values = text.replace(";", ",").replace("\n", ",").split(",")
-    result: list[str] = []
-    seen: set[str] = set()
-    for value in values:
-        gene = str(value).strip()
-        key = gene.upper()
-        if gene and key not in seen:
-            result.append(gene)
-            seen.add(key)
-    return result
+    return normalize_gene_list(text)
 
 
 def scan_h5ad(folder: str | Path) -> list[Path]:
@@ -507,6 +504,7 @@ def _classify_fields(
             else:
                 public_pattern = "Weakly organized diffuse transition"
     else:
+        high_g = np.zeros(len(C), dtype=bool)
         interface = np.zeros(len(C), dtype=bool)
         diffuse = np.zeros(len(C), dtype=bool)
         interface_sizes, diffuse_sizes = [], []
@@ -522,6 +520,7 @@ def _classify_fields(
     return {
         "high_c": high_c,
         "high_s": high_s,
+        "high_g": high_g,
         "interface": interface,
         "diffuse": diffuse,
         "interface_sizes": interface_sizes,
@@ -602,8 +601,29 @@ def _robustness_check(
     }, table
 
 
-def score_h5ad(
-    path: str | Path,
+def _in_memory_matrix_info(adata) -> dict:
+    """Describe an in-memory AnnData matrix without materializing a dense copy."""
+    from scipy import sparse
+
+    shape = (int(adata.n_obs), int(adata.n_vars))
+    is_sparse = sparse.issparse(adata.X)
+    dense32 = int(shape[0]) * int(shape[1]) * 4
+    dense64 = int(shape[0]) * int(shape[1]) * 8
+    return {
+        "shape": shape,
+        "matrix_storage": "sparse" if is_sparse else "dense",
+        "matrix_encoding": type(adata.X).__name__,
+        "dense_float32_bytes": dense32,
+        "dense_float64_bytes": dense64,
+        "dense_float32_gb": dense32 / (1024 ** 3),
+        "dense_float64_gb": dense64 / (1024 ** 3),
+        "dense_conversion_warning": dense64 >= MEMORY_DENSE_WARNING_BYTES,
+        "warning": "",
+    }
+
+
+def score_adata(
+    adata,
     c_genes: list[str],
     s_genes: list[str],
     c_q: float = 0.80,
@@ -611,16 +631,33 @@ def score_h5ad(
     g_q: float = 0.60,
     options: ScoringOptions | dict | None = None,
     preflight_info: dict | None = None,
+    *,
+    source_path: str | Path | None = None,
+    sample_name: str | None = None,
+    gene_program_mode: str = "core",
 ):
+    """Run the canonical C/S balance-field engine on an already loaded AnnData.
+
+    The function reads selected gene columns but does not mutate ``adata``.  File
+    callers should use :func:`score_h5ad`, which loads once and delegates here.
+    """
     options = _coerce_options(options)
-    memory_info = preflight_info or inspect_h5ad_memory(path, options.dense_warning_gb)
-    adata = _read_h5ad(path)
+    memory_info = preflight_info or _in_memory_matrix_info(adata)
+    resolved_source = Path(source_path).expanduser().resolve() if source_path else None
+    resolved_sample = sample_name or (resolved_source.stem if resolved_source else "in_memory")
     for name, value in (("C", c_q), ("S", s_q), ("G", g_q)):
         if not 0 < float(value) < 1:
             raise ValueError(f"{name} quantile must be between 0 and 1.")
     if adata.n_obs < 2:
         raise ValueError("Spatial scoring requires at least two spots/observations.")
-    c_genes, s_genes = parse_gene_text(c_genes), parse_gene_text(s_genes)
+    gene_validation = validate_gene_programs(
+        c_genes,
+        s_genes,
+        mode=gene_program_mode,
+        overlap_policy="error",
+    )
+    c_genes = gene_validation.normalized_c_genes
+    s_genes = gene_validation.normalized_s_genes
     c_idx, c_present, c_missing = _gene_indices(adata, c_genes)
     s_idx, s_present, s_missing = _gene_indices(adata, s_genes)
     if not c_idx or not s_idx:
@@ -666,9 +703,7 @@ def score_h5ad(
         qc_notes.append("duplicate_feature_names")
     if adata.n_obs < 10:
         qc_notes.append("very_small_spot_count")
-    overlap = sorted({gene.upper() for gene in c_present} & {gene.upper() for gene in s_present})
-    if overlap:
-        qc_notes.append("overlapping_C_S_genes")
+    overlap = list(gene_validation.overlap_genes)
     if smoothing_diagnostics["smoothing_warning"]:
         qc_notes.append("smoothing_skipped")
     qc_flag = "PASS"
@@ -678,7 +713,7 @@ def score_h5ad(
         qc_flag = "WARN"
     selected_dense64_mb = expression.size * 8 / (1024 ** 2)
     metrics = {
-        "sample": Path(path).stem, "source_h5ad": str(Path(path).resolve()), "status": "ok",
+        "sample": resolved_sample, "source_h5ad": str(resolved_source) if resolved_source else "", "status": "ok",
         "n_spots": int(adata.n_obs), "n_genes": int(adata.n_vars), "coordinate_source": coord_source,
         "expression_transform": "log1p_count_like" if count_like else "existing_processed_scale",
         "normalization_mode": options.normalization_mode,
@@ -729,6 +764,12 @@ def score_h5ad(
         "C_gene_coverage": c_coverage, "S_gene_coverage": s_coverage,
         "QC_flag": qc_flag, "QC_notes": ";".join(qc_notes),
         "C_S_overlap_genes": ";".join(overlap),
+        "gene_program_validation_status": gene_validation.validation_status,
+        "gene_program_overlap_policy": gene_validation.overlap_policy,
+        "n_overlap_genes": gene_validation.n_overlap_genes,
+        "overlap_genes": ";".join(gene_validation.overlap_genes),
+        "C_duplicates_removed": ";".join(gene_validation.c_duplicates_removed),
+        "S_duplicates_removed": ";".join(gene_validation.s_duplicates_removed),
         "unique_feature_names": case_insensitive_unique,
         "interface_c_q": c_q, "interface_s_q": s_q, "interface_g_q": g_q,
         "matrix_shape": "x".join(map(str, memory_info.get("shape") or [adata.n_obs, adata.n_vars])),
@@ -744,14 +785,47 @@ def score_h5ad(
     }
     fields = {
         "coords": coords, "C": C, "S": S, "R": R, "G": G,
+        "high_c": classification["high_c"],
+        "high_s": classification["high_s"],
+        "high_g": classification["high_g"],
         "interface": classification["interface"],
         "diffuse": classification["diffuse"],
         "spatial_available": spatial_available,
         "robustness_table": robustness_table,
         "memory_info": memory_info,
         "options": _options_to_json(options),
+        "gene_program_validation": gene_validation.to_provenance(),
     }
     return metrics, fields
+
+
+def score_h5ad(
+    path: str | Path,
+    c_genes: list[str],
+    s_genes: list[str],
+    c_q: float = 0.80,
+    s_q: float = 0.80,
+    g_q: float = 0.60,
+    options: ScoringOptions | dict | None = None,
+    preflight_info: dict | None = None,
+    gene_program_mode: str = "core",
+):
+    """Load one H5AD once, then delegate to the canonical in-memory engine."""
+    options = _coerce_options(options)
+    memory_info = preflight_info or inspect_h5ad_memory(path, options.dense_warning_gb)
+    adata = _read_h5ad(path)
+    return score_adata(
+        adata,
+        c_genes,
+        s_genes,
+        c_q,
+        s_q,
+        g_q,
+        options=options,
+        preflight_info=memory_info,
+        source_path=path,
+        gene_program_mode=gene_program_mode,
+    )
 
 
 def save_spatial_map(path: str | Path, metrics: dict, fields: dict) -> Path:
@@ -759,6 +833,10 @@ def save_spatial_map(path: str | Path, metrics: dict, fields: dict) -> Path:
         raise ValueError(SPATIAL_QC_MESSAGE)
     import matplotlib
     matplotlib.use("Agg")
+    import platform
+    if platform.system() == "Windows":
+        matplotlib.rcParams["font.sans-serif"] = ["Malgun Gothic", "DejaVu Sans"]
+        matplotlib.rcParams["axes.unicode_minus"] = False
     import matplotlib.pyplot as plt
 
     output = Path(path)
@@ -842,6 +920,7 @@ def write_parameter_log(
     options: ScoringOptions,
     memory_info: dict,
     metrics: dict | None = None,
+    gene_program_validation: dict | None = None,
 ) -> Path:
     """Write a machine-readable parameter and memory-safety log for one sample."""
     output = Path(path)
@@ -855,6 +934,16 @@ def write_parameter_log(
         "sample_name": sample_name,
         "C_gene_list": list(c_genes),
         "S_gene_list": list(s_genes),
+        "gene_program_validation": gene_program_validation or {
+            "c_genes_requested": list(c_genes),
+            "s_genes_requested": list(s_genes),
+            "c_genes_used": list(c_genes),
+            "s_genes_used": list(s_genes),
+            "overlap_genes": [],
+            "n_overlap_genes": 0,
+            "overlap_policy": "error",
+            "validation_status": "valid",
+        },
         "smoothing": {
             "mode": options.smoothing_mode,
             "k": int(options.smoothing_k),
@@ -896,10 +985,19 @@ def write_parameter_log(
 
 def run_batch(paths: list[Path], output_root: str | Path, c_genes: list[str], s_genes: list[str],
               progress: Progress | None = None, c_q: float = .80, s_q: float = .80, g_q: float = .60,
-              options: ScoringOptions | dict | None = None) -> tuple[Path, pd.DataFrame]:
+              options: ScoringOptions | dict | None = None,
+              gene_program_mode: str = "custom") -> tuple[Path, pd.DataFrame]:
     options = _coerce_options(options)
     if not paths:
         raise ValueError("Select at least one h5ad sample.")
+    gene_validation = validate_gene_programs(
+        c_genes,
+        s_genes,
+        mode=gene_program_mode,
+        overlap_policy="error",
+    )
+    c_genes = gene_validation.normalized_c_genes
+    s_genes = gene_validation.normalized_s_genes
     stamp = dt.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     run_dir = Path(output_root).expanduser().resolve() / f"spatialtx_run_{stamp}"
     run_dir.mkdir(parents=True, exist_ok=False)
@@ -908,6 +1006,7 @@ def run_batch(paths: list[Path], output_root: str | Path, c_genes: list[str], s_
         "application": "SpatialTX Studio Desktop", "version": __version__, "created": created,
         "input_files": [str(Path(path).resolve()) for path in paths],
         "C_gene_program": list(c_genes), "S_gene_program": list(s_genes),
+        "gene_program_validation": gene_validation.to_provenance(),
         "interface_quantiles": {"C": c_q, "S": s_q, "G": g_q},
         "spatial_neighbors_k": 6,
         "scoring_options": _options_to_json(options),
@@ -933,7 +1032,17 @@ def run_batch(paths: list[Path], output_root: str | Path, c_genes: list[str], s_
                 )
                 if memory_info.get("warning"):
                     progress(f"  Warning: {memory_info['warning']}")
-            metrics, fields = score_h5ad(path, c_genes, s_genes, c_q, s_q, g_q, options=options, preflight_info=memory_info)
+            metrics, fields = score_h5ad(
+                path,
+                c_genes,
+                s_genes,
+                c_q,
+                s_q,
+                g_q,
+                options=options,
+                preflight_info=memory_info,
+                gene_program_mode=gene_program_mode,
+            )
             metrics["source_sample_name"] = base_name
             metrics["sample"] = sample_name
             if fields.get("spatial_available", False):
@@ -957,6 +1066,7 @@ def run_batch(paths: list[Path], output_root: str | Path, c_genes: list[str], s_
                     options=options,
                     memory_info=fields.get("memory_info", memory_info),
                     metrics=metrics,
+                    gene_program_validation=gene_validation.to_provenance(),
                 )
                 metrics["parameter_log_json"] = str(parameter_log)
             robustness_table = fields.get("robustness_table")
@@ -1041,7 +1151,10 @@ def optimize_genes(path: str | Path, side: str, c_genes: list[str], s_genes: lis
         raise ValueError("Optimizer side must be C or S.")
     if iterations < 1:
         raise ValueError("Optimizer iterations must be at least 1.")
-    baseline, fields = score_h5ad(path, c_genes, s_genes)
+    input_validation = validate_gene_programs(c_genes, s_genes, mode="qubo")
+    c_genes = input_validation.normalized_c_genes
+    s_genes = input_validation.normalized_s_genes
+    baseline, fields = score_h5ad(path, c_genes, s_genes, gene_program_mode="qubo")
     if not fields.get("spatial_available", False):
         raise ValueError(SPATIAL_QC_MESSAGE + " Spatially informed QUBO optimization is unavailable.")
     adata = _read_h5ad(path)
@@ -1051,13 +1164,28 @@ def optimize_genes(path: str | Path, side: str, c_genes: list[str], s_genes: lis
         lookup.setdefault(gene.upper(), gene)
     markers = C_MARKERS if side == "C" else S_MARKERS
     current = c_genes if side == "C" else s_genes
-    opposite = {g.upper() for g in (s_genes if side == "C" else c_genes)}
+    opposite = set(s_genes if side == "C" else c_genes)
     candidates: list[str] = []
+    candidate_keys: set[str] = set()
+    excluded_due_to_opposite_side: list[str] = []
+    excluded_keys: set[str] = set()
+
+    def record_excluded(gene: str) -> None:
+        key = str(gene).strip().upper()
+        if key and key not in excluded_keys:
+            excluded_keys.add(key)
+            excluded_due_to_opposite_side.append(key)
+
     seed_pool = (list(candidate_genes) if candidate_genes else markers) + list(current)
     for gene in seed_pool:
-        actual = lookup.get(gene.upper())
-        if actual and actual.upper() not in opposite and actual not in candidates and not _technical(actual):
-            candidates.append(actual)
+        key = str(gene).strip().upper()
+        actual = lookup.get(key)
+        if key in opposite:
+            record_excluded(key)
+            continue
+        if actual and key not in candidate_keys and not _technical(key):
+            candidates.append(key)
+            candidate_keys.add(key)
     # Add high-variance genes only when marker coverage leaves room in the bounded pool.
     if not candidate_genes and len(candidates) < pool_size:
         X = adata.X
@@ -1068,8 +1196,13 @@ def optimize_genes(path: str | Path, side: str, c_genes: list[str], s_genes: lis
             variance = np.nanvar(np.asarray(X, dtype=float), axis=0)
         for index in np.argsort(-np.nan_to_num(variance)):
             gene = genes[int(index)]
-            if gene.upper() not in opposite and gene not in candidates and not _technical(gene):
-                candidates.append(gene)
+            key = gene.upper()
+            if key in opposite:
+                record_excluded(key)
+                continue
+            if key not in candidate_keys and not _technical(key):
+                candidates.append(key)
+                candidate_keys.add(key)
                 if len(candidates) >= pool_size:
                     break
     candidates = candidates[:pool_size]
@@ -1079,7 +1212,7 @@ def optimize_genes(path: str | Path, side: str, c_genes: list[str], s_genes: lis
         raise ValueError("Selected gene count (k) must be at least 1.")
     if len(candidates) < k:
         raise ValueError(f"Cannot select exactly k={k} genes from {len(candidates)} available candidates.")
-    indices = [genes.index(g) for g in candidates]
+    indices = [genes.index(lookup[g]) for g in candidates]
     expression = _dense(adata.X[:, indices])
     if _is_count_like(adata.X):
         expression = np.log1p(expression)
@@ -1116,13 +1249,17 @@ def optimize_genes(path: str | Path, side: str, c_genes: list[str], s_genes: lis
     selected_mask, energy = _anneal(diagonal, .45 * redundancy, k, iterations, seed=seed)
     selected = [candidates[i] for i in np.flatnonzero(selected_mask)]
     opt_c, opt_s = (selected, s_genes) if side == "C" else (c_genes, selected)
-    optimized, _ = score_h5ad(path, opt_c, opt_s)
+    final_validation = validate_gene_programs(opt_c, opt_s, mode="qubo")
+    optimized, _ = score_h5ad(path, opt_c, opt_s, gene_program_mode="qubo")
     detail = pd.DataFrame({
+        "candidate_index": np.arange(len(candidates)),
         "gene": candidates, "selected": selected_mask, "side": side, "qubo_reward": reward,
         "target_corr_reward": target_reward, "balance_corr_reward": balance_reward,
         "side_enrichment_reward": enrichment, "gradient_corr_reward": gradient_reward,
         "interface_enrichment_reward": interface_reward,
         "opposite_corr_penalty": opposite_penalty, "detection_fraction": detection, "q_diag": diagonal,
+        "overlap_constraint_enabled": True,
+        "genes_excluded_due_to_opposite_side": ";".join(excluded_due_to_opposite_side),
     }).sort_values(["selected", "qubo_reward"], ascending=[False, False])
     summary = {
         "sample": Path(path).stem, "side": side, "selected_genes": ";".join(selected),
@@ -1132,6 +1269,12 @@ def optimize_genes(path: str | Path, side: str, c_genes: list[str], s_genes: lis
         "baseline_interface_fraction": baseline["interface_fraction"], "optimized_interface_fraction": optimized["interface_fraction"],
         "delta_interface_fraction": optimized["interface_fraction"] - baseline["interface_fraction"],
         "baseline_R_dynamic_range": baseline["R_dynamic_range"], "optimized_R_dynamic_range": optimized["R_dynamic_range"],
+        "overlap_constraint_enabled": True,
+        "overlap_constraint": "x_C,g + x_S,g <= 1 via opposite-side candidate-pool exclusion",
+        "genes_excluded_due_to_opposite_side": ";".join(excluded_due_to_opposite_side),
+        "final_overlap_genes": ";".join(final_validation.overlap_genes),
+        "final_overlap_count": final_validation.n_overlap_genes,
+        "gene_program_validation": final_validation.to_provenance(),
     }
     return selected, detail, summary
 
@@ -1142,6 +1285,298 @@ def save_optimizer_results(output_root: str | Path, sample: str, side: str, deta
     stamp = dt.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     detail.to_csv(folder / f"{sample}_{side}_qubo_detail_{stamp}.csv", index=False)
     pd.DataFrame([summary]).to_csv(folder / f"{sample}_{side}_qubo_summary_{stamp}.csv", index=False)
+    (folder / f"{sample}_{side}_qubo_summary_{stamp}.json").write_text(
+        json.dumps(
+            summary,
+            indent=2,
+            ensure_ascii=False,
+            default=lambda value: value.item() if isinstance(value, np.generic) else str(value),
+        ),
+        encoding="utf-8",
+    )
+    return folder
+
+
+def _mask_jaccard(left: np.ndarray, right: np.ndarray) -> float:
+    left = np.asarray(left, dtype=bool)
+    right = np.asarray(right, dtype=bool)
+    union = int(np.sum(left | right))
+    return float(np.sum(left & right) / union) if union else 1.0
+
+
+def _optimizer_seed_sequence(seed_start: int, seed_count: int) -> tuple[list[int], str]:
+    """Advance valid YYYYMMDD seeds by calendar day, otherwise by integer."""
+    start = int(seed_start)
+    count = int(seed_count)
+    text = str(start)
+    if len(text) == 8:
+        try:
+            start_date = dt.datetime.strptime(text, "%Y%m%d").date()
+            return [
+                int((start_date + dt.timedelta(days=offset)).strftime("%Y%m%d"))
+                for offset in range(count)
+            ], "calendar_day_sequence"
+        except ValueError:
+            pass
+    return list(range(start, start + count)), "integer_sequence"
+
+
+def optimize_genes_multiseed(
+    path: str | Path,
+    side: str,
+    c_genes: list[str],
+    s_genes: list[str],
+    k: int = 8,
+    pool_size: int = 40,
+    iterations: int = 1000,
+    candidate_genes: list[str] | None = None,
+    *,
+    seeds: Iterable[int] | None = None,
+    seed_start: int = 20260624,
+    seed_count: int = 10,
+    consensus_threshold: float = 0.80,
+    progress: Progress | None = None,
+) -> tuple[list[str], pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, dict]:
+    """Repeat the heuristic optimizer and summarize computational stability.
+
+    The returned consensus is a deterministic exact-k set ranked by selection
+    frequency, then the fixed per-gene QUBO reward. Frequency-based core genes
+    are reported separately and may contain fewer or more than k genes.
+    """
+    side = side.upper()
+    if side not in {"C", "S"}:
+        raise ValueError("Optimizer side must be C or S.")
+    if int(iterations) < 1:
+        raise ValueError("Optimizer iterations must be at least 1.")
+    if int(seed_count) < 2 and seeds is None:
+        raise ValueError("Multi-seed optimization requires at least two seeds.")
+    if not 0 < float(consensus_threshold) <= 1:
+        raise ValueError("Consensus threshold must be greater than 0 and at most 1.")
+    if seeds is not None:
+        seed_values = [int(value) for value in seeds]
+        seed_generation = "explicit_list"
+    else:
+        seed_values, seed_generation = _optimizer_seed_sequence(seed_start, seed_count)
+    if len(seed_values) < 2:
+        raise ValueError("Multi-seed optimization requires at least two seeds.")
+    if any(value < 0 for value in seed_values):
+        raise ValueError("Optimizer seeds must be non-negative integers.")
+    if len(set(seed_values)) != len(seed_values):
+        raise ValueError("Multi-seed optimization seeds must be unique.")
+
+    input_validation = validate_gene_programs(c_genes, s_genes, mode="qubo")
+    c_genes = input_validation.normalized_c_genes
+    s_genes = input_validation.normalized_s_genes
+    baseline, baseline_fields = score_h5ad(path, c_genes, s_genes, gene_program_mode="qubo")
+    baseline_r = np.asarray(baseline_fields["R"], dtype=float)
+    baseline_interface = np.asarray(baseline_fields["interface"], dtype=bool)
+    baseline_side_genes = c_genes if side == "C" else s_genes
+    run_rows: list[dict] = []
+    detail_tables: list[pd.DataFrame] = []
+    selected_by_seed: dict[int, list[str]] = {}
+    r_by_seed: dict[int, np.ndarray] = {}
+    interface_by_seed: dict[int, np.ndarray] = {}
+    effective_candidate_genes = list(candidate_genes) if candidate_genes is not None else None
+    excluded_due_to_opposite_side: list[str] = []
+
+    for number, seed in enumerate(seed_values, 1):
+        if progress:
+            progress(f"Optimizer seed {number}/{len(seed_values)}: {seed}")
+        selected, detail, summary = optimize_genes(
+            path,
+            side,
+            c_genes,
+            s_genes,
+            k=k,
+            pool_size=pool_size,
+            iterations=iterations,
+            candidate_genes=effective_candidate_genes,
+            seed=seed,
+        )
+        if effective_candidate_genes is None:
+            # Freeze the first run's deterministic pool so later seeds vary only
+            # the annealing path, not candidate discovery or high-variance ties.
+            effective_candidate_genes = detail.sort_values("candidate_index")["gene"].astype(str).tolist()
+        for gene in str(summary.get("genes_excluded_due_to_opposite_side", "")).split(";"):
+            if gene and gene not in excluded_due_to_opposite_side:
+                excluded_due_to_opposite_side.append(gene)
+        opt_c, opt_s = (selected, s_genes) if side == "C" else (c_genes, selected)
+        optimized, optimized_fields = score_h5ad(path, opt_c, opt_s, gene_program_mode="qubo")
+        optimized_r = np.asarray(optimized_fields["R"], dtype=float)
+        optimized_interface = np.asarray(optimized_fields["interface"], dtype=bool)
+        selected_set = {gene.upper() for gene in selected}
+        baseline_set = {gene.upper() for gene in baseline_side_genes}
+        union = selected_set | baseline_set
+        row = dict(summary)
+        row.update({
+            "run_number": number,
+            "random_seed": seed,
+            "qubo_energy_direction": "lower_is_better",
+            "baseline_gene_overlap_count": len(selected_set & baseline_set),
+            "baseline_gene_jaccard": len(selected_set & baseline_set) / len(union) if union else 1.0,
+            "R_correlation_to_baseline": _corr(optimized_r, baseline_r),
+            "interface_jaccard_to_baseline": _mask_jaccard(optimized_interface, baseline_interface),
+            "regime_matches_baseline": optimized["regime_label"] == baseline["regime_label"],
+        })
+        run_rows.append(row)
+        detail = detail.copy()
+        detail.insert(0, "random_seed", seed)
+        detail.insert(0, "run_number", number)
+        detail_tables.append(detail)
+        selected_by_seed[seed] = selected
+        r_by_seed[seed] = optimized_r
+        interface_by_seed[seed] = optimized_interface
+
+    runs = pd.DataFrame(run_rows).sort_values("random_seed").reset_index(drop=True)
+    details = pd.concat(detail_tables, ignore_index=True)
+    gene_order = list(dict.fromkeys(details["gene"].astype(str)))
+    counts = Counter(gene for genes in selected_by_seed.values() for gene in genes)
+    gene_reward = details.groupby("gene", sort=False)["qubo_reward"].mean().to_dict()
+    frequency_rows = []
+    for gene in gene_order:
+        count = int(counts.get(gene, 0))
+        fraction = count / len(seed_values)
+        frequency_rows.append({
+            "gene": gene,
+            "selection_count": count,
+            "seed_count": len(seed_values),
+            "selection_frequency": fraction,
+            "mean_qubo_reward": float(gene_reward.get(gene, np.nan)),
+            "stability_class": (
+                "consensus_core"
+                if fraction >= consensus_threshold
+                else "moderately_stable"
+                if fraction >= 0.50
+                else "seed_sensitive_alternative"
+            ),
+        })
+    frequency = pd.DataFrame(frequency_rows).sort_values(
+        ["selection_frequency", "mean_qubo_reward", "gene"],
+        ascending=[False, False, True],
+        key=lambda column: column.str.upper() if column.name == "gene" else column,
+    ).reset_index(drop=True)
+    consensus_core = frequency.loc[frequency["selection_frequency"] >= consensus_threshold, "gene"].tolist()
+    consensus_genes = frequency.head(k)["gene"].tolist()
+    final_c, final_s = (consensus_genes, s_genes) if side == "C" else (c_genes, consensus_genes)
+    final_validation = validate_gene_programs(final_c, final_s, mode="qubo")
+    frequency["in_consensus_k_set"] = frequency["gene"].isin(consensus_genes)
+
+    overlap_rows: list[dict] = []
+    for left_index, left_seed in enumerate(seed_values):
+        for right_seed in seed_values[left_index + 1:]:
+            left = {gene.upper() for gene in selected_by_seed[left_seed]}
+            right = {gene.upper() for gene in selected_by_seed[right_seed]}
+            union = left | right
+            overlap_rows.append({
+                "seed_a": left_seed,
+                "seed_b": right_seed,
+                "overlap_count": len(left & right),
+                "jaccard": len(left & right) / len(union) if union else 1.0,
+                "energy_absolute_difference": abs(
+                    float(runs.loc[runs["random_seed"].eq(left_seed), "qubo_energy"].iloc[0])
+                    - float(runs.loc[runs["random_seed"].eq(right_seed), "qubo_energy"].iloc[0])
+                ),
+                "R_field_correlation": _corr(r_by_seed[left_seed], r_by_seed[right_seed]),
+                "interface_mask_jaccard": _mask_jaccard(interface_by_seed[left_seed], interface_by_seed[right_seed]),
+            })
+    overlap = pd.DataFrame(overlap_rows)
+    energies = pd.to_numeric(runs["qubo_energy"], errors="coerce").to_numpy(dtype=float)
+    median_overlap = float(overlap["overlap_count"].median()) if len(overlap) else float(k)
+    median_changed = float(k - median_overlap)
+    stability_label = (
+        "comparatively_stable"
+        if median_changed <= 2
+        else "alternative_near_tie_solutions"
+        if median_overlap >= k / 2
+        else "optimizer_unstable"
+    )
+    regime_counts = runs["optimized_regime_label"].value_counts(dropna=False)
+    summary = {
+        "sample": Path(path).stem,
+        "side": side,
+        "analysis": "multi_seed_optimizer_stability",
+        "seed_count": len(seed_values),
+        "seeds": seed_values,
+        "seed_generation": seed_generation,
+        "iterations_per_seed": int(iterations),
+        "candidate_pool_size": int(runs["candidate_pool_size"].max()),
+        "requested_k": int(k),
+        "consensus_threshold": float(consensus_threshold),
+        "consensus_core_genes": consensus_core,
+        "consensus_k_genes": consensus_genes,
+        "stability_label": stability_label,
+        "median_pairwise_overlap_count": median_overlap,
+        "median_pairwise_changed_gene_count": median_changed,
+        "mean_pairwise_jaccard": float(overlap["jaccard"].mean()) if len(overlap) else 1.0,
+        "mean_pairwise_R_field_correlation": float(overlap["R_field_correlation"].mean()) if len(overlap) else 1.0,
+        "mean_pairwise_interface_jaccard": float(overlap["interface_mask_jaccard"].mean()) if len(overlap) else 1.0,
+        "regime_agreement_fraction": float(regime_counts.max() / len(runs)) if len(runs) else np.nan,
+        "baseline_regime_agreement_fraction": float(runs["regime_matches_baseline"].mean()),
+        "R_direction_flip_count": int((runs["R_correlation_to_baseline"] < 0).sum()),
+        "qubo_energy_direction": "lower_is_better",
+        "qubo_energy_min": float(np.nanmin(energies)),
+        "qubo_energy_mean": float(np.nanmean(energies)),
+        "qubo_energy_sd": float(np.nanstd(energies)),
+        "qubo_energy_max": float(np.nanmax(energies)),
+        "overlap_constraint_enabled": True,
+        "overlap_constraint": "x_C,g + x_S,g <= 1 via opposite-side candidate-pool exclusion",
+        "genes_excluded_due_to_opposite_side": excluded_due_to_opposite_side,
+        "final_overlap_genes": list(final_validation.overlap_genes),
+        "final_overlap_count": final_validation.n_overlap_genes,
+        "gene_program_validation": final_validation.to_provenance(),
+        "interpretation_limit": (
+            "Multi-seed consensus measures computational stability under the selected dataset, candidate pool, "
+            "objective weights, and parameters. It does not establish biological validity or a uniquely optimal gene program."
+        ),
+    }
+    return consensus_genes, runs, frequency, overlap, details, summary
+
+
+def save_multiseed_optimizer_results(
+    output_root: str | Path,
+    sample: str,
+    side: str,
+    runs: pd.DataFrame,
+    frequency: pd.DataFrame,
+    overlap: pd.DataFrame,
+    details: pd.DataFrame,
+    summary: dict,
+) -> Path:
+    stamp = dt.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    folder = Path(output_root) / "optimizer" / f"{sample}_{side}_multiseed_{stamp}"
+    folder.mkdir(parents=True, exist_ok=False)
+    runs.to_csv(folder / "optimizer_multiseed_runs.csv", index=False)
+    frequency.to_csv(folder / "optimizer_selection_frequency.csv", index=False)
+    overlap.to_csv(folder / "optimizer_pairwise_overlap.csv", index=False)
+    details.to_csv(folder / "optimizer_multiseed_gene_details.csv", index=False)
+    pd.DataFrame([{**summary, "seeds": ";".join(map(str, summary["seeds"])), "consensus_core_genes": ";".join(summary["consensus_core_genes"]), "consensus_k_genes": ";".join(summary["consensus_k_genes"])}]).to_csv(
+        folder / "optimizer_stability_summary.csv", index=False
+    )
+    (folder / "optimizer_stability_summary.json").write_text(
+        json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+    try:
+        import matplotlib.pyplot as plt
+
+        top = frequency.head(min(30, len(frequency))).iloc[::-1]
+        fig, ax = plt.subplots(figsize=(8, max(4, 0.25 * len(top))))
+        ax.barh(top["gene"], top["selection_frequency"], color="#2563eb")
+        ax.axvline(float(summary["consensus_threshold"]), color="#b91c1c", linestyle="--", label="consensus threshold")
+        ax.set(xlabel="Selection frequency", ylabel="Gene", xlim=(0, 1), title=f"{sample} {side}-side multi-seed selection frequency")
+        ax.legend(loc="lower right")
+        fig.tight_layout()
+        fig.savefig(folder / "optimizer_selection_frequency.png", dpi=160)
+        plt.close(fig)
+
+        fig, ax = plt.subplots(figsize=(6, 4))
+        ax.plot(runs["random_seed"].astype(str), runs["qubo_energy"], marker="o", color="#0f766e")
+        ax.set(xlabel="Seed", ylabel="QUBO energy (lower is better)", title=f"{sample} {side}-side objective stability")
+        ax.tick_params(axis="x", rotation=45)
+        fig.tight_layout()
+        fig.savefig(folder / "optimizer_energy_stability.png", dpi=160)
+        plt.close(fig)
+    except Exception as exc:
+        (folder / "plot_warning.txt").write_text(f"Optimizer stability plots were not created: {exc}\n", encoding="utf-8")
     return folder
 
 

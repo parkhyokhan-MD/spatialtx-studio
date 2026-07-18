@@ -1,5 +1,25 @@
 # SpatialTX Studio Desktop validation record
 
+## v0.4-beta stabilization
+
+Validation date: 2026-07-14
+
+- Preserved the public v0.3-beta package and copied v0.4 development into separate `SpatialTX_Studio_Desktop_v0_4_dev_original` and `SpatialTX_Studio_Desktop_v0_4_beta_work` directories.
+- Python compile checks passed for desktop, studio, graph, importer, CLI, and test modules.
+- All 63 automated tests passed: the original 49 plus 14 beta-stabilization regression tests.
+- The canonical `score_adata()` engine produces identical C, S, R, G, interface mask, diffuse mask, regime, Type B pattern, transition burden, and adjacency metrics through `score_h5ad()` and the CLI FRAME2.6 wrapper.
+- Spatial Graph uses its already loaded AnnData and no longer reloads the same H5AD for C/S scoring.
+- Large local synthetic graphs are not warned solely because density is below 0.002. Degree, isolation, component, and distance QC drive warnings.
+- Duplicate-coordinate inverse-distance tests exclude zero-distance edges, record the exclusion count, retain finite weights, and invalidate graphs with no remaining edges.
+- Regular Visium-like, irregular-coordinate, and duplicate-coordinate synthetic datasets passed radius, lattice/fallback, and symmetric-KNN construction (nine graph/dataset combinations).
+- Smoothing metadata/warnings, SpatialTX-derived label provenance, permutation limitations, within-table FDR scope, context scale-aware detection, counts-layer preference, leave-one-gene-out influence, zero-edge failure, and sparse-input preservation are covered.
+- Main Mapper and Spatial Graph succeeded with Korean and space-containing paths and produced CSV, JSON, PNG, and optional annotated H5AD outputs.
+- `run_desktop.bat --help`, source GUI startup/capture/clean shutdown, Main Mapper backend, H5AD scanning, and Spatial Graph backend passed on Windows. No Python GUI process remained after the capture harness closed.
+- A wheel built as `spatialtx_studio_desktop-0.4b0-py3-none-any.whl`; its packaged `spatialtx_studio/resources/config_default.yaml` loaded through `importlib.resources` in a fresh virtual environment.
+- Installed-wheel `spatialtx --help`, `spatialtx-desktop --help`, `spatialtx-advanced --help`, and a minimal synthetic FRAME2.6 H5AD run passed from outside the source directory.
+- Mandatory Main Mapper regression confirms unchanged C, S, R, G, localized-interface mask, diffuse-transition mask, regime label, and Type B/public transition pattern when the optional graph/context workflow is not enabled.
+- Existing v0.3-beta validation history is retained below for release-line traceability.
+
 ## v0.3-beta Import / Convert architecture
 
 Validation date: 2026-07-08

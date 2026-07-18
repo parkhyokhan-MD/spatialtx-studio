@@ -3,20 +3,27 @@ setlocal
 cd /d "%~dp0"
 
 if exist "%USERPROFILE%\miniconda3\python.exe" (
-  "%USERPROFILE%\miniconda3\python.exe" desktop_app.py
+  "%USERPROFILE%\miniconda3\python.exe" desktop_app.py %*
   if errorlevel 1 goto :launch_error
   goto :eof
 )
 
 if exist "%USERPROFILE%\anaconda3\python.exe" (
-  "%USERPROFILE%\anaconda3\python.exe" desktop_app.py
+  "%USERPROFILE%\anaconda3\python.exe" desktop_app.py %*
   if errorlevel 1 goto :launch_error
   goto :eof
 )
 
 where python >nul 2>nul
 if %errorlevel%==0 (
-  python desktop_app.py
+  python desktop_app.py %*
+  if errorlevel 1 goto :launch_error
+  goto :eof
+)
+
+where py >nul 2>nul
+if %errorlevel%==0 (
+  py -3 desktop_app.py %*
   if errorlevel 1 goto :launch_error
   goto :eof
 )

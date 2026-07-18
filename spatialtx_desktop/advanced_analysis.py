@@ -10,6 +10,7 @@ import numpy as np
 import pandas as pd
 
 from . import __version__
+from .gene_program_validation import GeneProgramValidationResult, validate_gene_programs
 from .workflow import (
     SPATIAL_QC_MESSAGE,
     _dense,
@@ -17,7 +18,6 @@ from .workflow import (
     _is_count_like,
     _knn,
     _read_h5ad,
-    parse_gene_text,
     score_h5ad,
 )
 
@@ -32,10 +32,9 @@ MODULE_LABELS = {
 
 def _prepare(path: str | Path, c_genes: Iterable[str], s_genes: Iterable[str]):
     adata = _read_h5ad(path)
-    c_requested = parse_gene_text(c_genes)
-    s_requested = parse_gene_text(s_genes)
-    if not c_requested or not s_requested:
-        raise ValueError("Cx and Sx gene sets must both contain at least one gene.")
+    validation = validate_gene_programs(c_genes, s_genes, mode="custom")
+    c_requested = validation.normalized_c_genes
+    s_requested = validation.normalized_s_genes
     requested = c_requested + [g for g in s_requested if g.upper() not in {x.upper() for x in c_requested}]
     indices, present, _ = _gene_indices(adata, requested)
     lookup = {gene.upper(): i for i, gene in enumerate(present)}
@@ -46,7 +45,20 @@ def _prepare(path: str | Path, c_genes: Iterable[str], s_genes: Iterable[str]):
     if matrix.ndim == 1:
         matrix = matrix[:, None]
     matrix[~np.isfinite(matrix)] = np.nan
-    return adata, c_requested, s_requested, present, lookup, matrix, count_like
+    return adata, c_requested, s_requested, present, lookup, matrix, count_like, validation
+
+
+def _validation_columns(validation: GeneProgramValidationResult) -> dict:
+    return {
+        "c_gene_count_requested": len(validation.requested_c_genes),
+        "s_gene_count_requested": len(validation.requested_s_genes),
+        "c_gene_count_used": len(validation.normalized_c_genes),
+        "s_gene_count_used": len(validation.normalized_s_genes),
+        "n_overlap_genes": validation.n_overlap_genes,
+        "overlap_genes": ";".join(validation.overlap_genes),
+        "overlap_policy": validation.overlap_policy,
+        "program_validation_status": validation.validation_status,
+    }
 
 
 def _program_rows(program: str, requested: list[str], lookup: dict[str, int], present: list[str], matrix: np.ndarray) -> pd.DataFrame:
@@ -83,15 +95,18 @@ def _program_rows(program: str, requested: list[str], lookup: dict[str, int], pr
 
 
 def calculate_gene_composition(path: str | Path, c_genes: Iterable[str], s_genes: Iterable[str]) -> tuple[pd.DataFrame, dict]:
-    adata, c_requested, s_requested, present, lookup, matrix, count_like = _prepare(path, c_genes, s_genes)
+    adata, c_requested, s_requested, present, lookup, matrix, count_like, validation = _prepare(path, c_genes, s_genes)
     table = pd.concat([
         _program_rows("Cx", c_requested, lookup, present, matrix),
         _program_rows("Sx", s_requested, lookup, present, matrix),
     ], ignore_index=True)
+    for column, value in _validation_columns(validation).items():
+        table[column] = value
     metadata = {
         "sample": Path(path).stem, "source_h5ad": str(Path(path).resolve()),
         "n_spots": int(adata.n_obs), "expression_transform": "log1p_count_like" if count_like else "existing_processed_scale",
         "Cx_genes_requested": c_requested, "Sx_genes_requested": s_requested,
+        "gene_program_validation": validation.to_provenance(),
         "definition": "Within-program percentage of each gene's mean transformed expression; absolute transformed expression is used when the existing processed scale contains negative values.",
     }
     return table, metadata
@@ -133,8 +148,16 @@ def calculate_interface_enrichment(
 ) -> tuple[pd.DataFrame, dict]:
     from scipy.stats import mannwhitneyu
 
-    adata, c_requested, s_requested, present, lookup, matrix, count_like = _prepare(path, c_genes, s_genes)
-    metrics, fields = score_h5ad(path, c_requested, s_requested, c_q, s_q, g_q)
+    adata, c_requested, s_requested, present, lookup, matrix, count_like, validation = _prepare(path, c_genes, s_genes)
+    metrics, fields = score_h5ad(
+        path,
+        c_requested,
+        s_requested,
+        c_q,
+        s_q,
+        g_q,
+        gene_program_mode="custom",
+    )
     if not fields.get("spatial_available", False):
         raise ValueError(SPATIAL_QC_MESSAGE + " Interface Enrichment is unavailable.")
     interface = np.asarray(fields["interface"], dtype=bool)
@@ -194,6 +217,7 @@ def calculate_interface_enrichment(
         "interface_quantiles": {"Cx": c_q, "Sx": s_q, "G": g_q}, "v0_1_regime_label": metrics["regime_label"],
         "statistical_test": "Two-sided Mann-Whitney U with Benjamini-Hochberg correction; reported only when both groups contain at least two finite values.",
         "expression_transform": "log1p_count_like" if count_like else "existing_processed_scale",
+        "gene_program_validation": validation.to_provenance(),
     }
     return table, metadata
 
@@ -245,7 +269,16 @@ def calculate_spatial_interaction(
 ) -> tuple[pd.DataFrame, pd.DataFrame, dict, dict]:
     if permutations < 0:
         raise ValueError("Permutations must be zero or greater.")
-    metrics, fields = score_h5ad(path, parse_gene_text(c_genes), parse_gene_text(s_genes), c_q, s_q, g_q)
+    validation = validate_gene_programs(c_genes, s_genes, mode="custom")
+    metrics, fields = score_h5ad(
+        path,
+        validation.normalized_c_genes,
+        validation.normalized_s_genes,
+        c_q,
+        s_q,
+        g_q,
+        gene_program_mode="custom",
+    )
     if not fields.get("spatial_available", False):
         raise ValueError(SPATIAL_QC_MESSAGE + " Cx/Sx Interaction is unavailable.")
     adata = _read_h5ad(path)
@@ -296,6 +329,7 @@ def calculate_spatial_interaction(
             "Cx_Sx_edge_mixing_fraction": "Fraction of informative dominance edges joining opposite Cx- and Sx-dominant neighborhoods.",
         },
         "null_model": "Seeded permutation of Sx activation across fixed coordinates, followed by neighborhood recomputation.",
+        "gene_program_validation": validation.to_provenance(),
     }
     plot_fields = {"coords": coords, "local_c": local_c, "local_s": local_s, "spot_table": spot_table}
     return pd.DataFrame([row]), spot_table, metadata, plot_fields
@@ -407,6 +441,9 @@ def run_advanced_batch(
         raise ValueError(f"Unknown advanced analysis module: {module}")
     if not paths:
         raise ValueError("Select at least one h5ad sample.")
+    validation = validate_gene_programs(c_genes, s_genes, mode="custom")
+    c_genes = validation.normalized_c_genes
+    s_genes = validation.normalized_s_genes
     stamp = dt.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     run_dir = Path(output_root).expanduser().resolve() / f"advanced_{module}_{stamp}"
     run_dir.mkdir(parents=True, exist_ok=False)
@@ -418,13 +455,21 @@ def run_advanced_batch(
         if progress:
             progress(f"[{number}/{len(paths)}] {MODULE_LABELS[module]}: {source.name}")
         try:
-            parameters = {"Cx_genes": list(c_genes), "Sx_genes": list(s_genes)}
+            parameters = {
+                "Cx_genes": list(c_genes),
+                "Sx_genes": list(s_genes),
+                "gene_program_validation": validation.to_provenance(),
+            }
             if module == "composition":
                 table, metadata = calculate_gene_composition(source, c_genes, s_genes)
+                for column, value in _validation_columns(validation).items():
+                    table[column] = value
+                metadata["gene_program_validation"] = validation.to_provenance()
                 csv_path = sample_dir / "gene_composition.csv"; table.to_csv(csv_path, index=False)
                 png, pdf = _plot_composition(table, sample, sample_dir / "gene_composition")
             elif module == "enrichment":
                 table, metadata = calculate_interface_enrichment(source, c_genes, s_genes, c_q, s_q, g_q)
+                metadata["gene_program_validation"] = validation.to_provenance()
                 csv_path = sample_dir / "interface_enrichment.csv"; table.to_csv(csv_path, index=False)
                 png, pdf = _plot_enrichment(table, sample, sample_dir / "interface_enrichment")
                 parameters["interface_quantiles"] = {"Cx": c_q, "Sx": s_q, "G": g_q}
@@ -432,6 +477,7 @@ def run_advanced_batch(
                 table, spots, metadata, plot_fields = calculate_spatial_interaction(
                     source, c_genes, s_genes, permutations, seed, c_q, s_q, g_q
                 )
+                metadata["gene_program_validation"] = validation.to_provenance()
                 csv_path = sample_dir / "interaction_summary.csv"; table.to_csv(csv_path, index=False)
                 spots.to_csv(sample_dir / "interaction_spot_metrics.csv", index=False)
                 png, pdf = _plot_interaction(table, plot_fields, sample, sample_dir / "cx_sx_interaction")

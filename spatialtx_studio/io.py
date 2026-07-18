@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+from importlib.resources import files
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
-import scanpy as sc
+import anndata as ad
 import yaml
 
 
@@ -16,7 +17,7 @@ def load_h5ad(path: str | Path):
         raise ValueError(f"Input path is not a file: {input_path}")
     if input_path.suffix.lower() != ".h5ad":
         raise ValueError(f"Only .h5ad input is supported by the analysis engine: {input_path}")
-    return sc.read_h5ad(input_path)
+    return ad.read_h5ad(input_path)
 
 
 def ensure_output_dirs(output_dir: str | Path) -> dict[str, Path]:
@@ -46,8 +47,14 @@ def write_selected_genes(path: str | Path, selected_c: list[str], selected_b: li
     pd.DataFrame(rows).to_csv(path, index=False)
 
 
-def load_config(default_path: str | Path, override_path: str | Path | None = None) -> dict[str, Any]:
-    with Path(default_path).open("r", encoding="utf-8") as f:
+def packaged_default_config():
+    """Return the config resource shipped inside source and wheel installs."""
+    return files("spatialtx_studio.resources").joinpath("config_default.yaml")
+
+
+def load_config(default_path: str | Path | None = None, override_path: str | Path | None = None) -> dict[str, Any]:
+    resource = Path(default_path) if default_path is not None else packaged_default_config()
+    with resource.open("r", encoding="utf-8") as f:
         config = yaml.safe_load(f) or {}
     if override_path:
         with Path(override_path).open("r", encoding="utf-8") as f:

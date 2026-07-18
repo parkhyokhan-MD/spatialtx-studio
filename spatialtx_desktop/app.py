@@ -10,6 +10,7 @@ from tkinter import filedialog, messagebox, ttk
 from . import APP_NAME, AUTHOR, BUILD_DATE, __version__
 from .advanced_analysis_ui import AdvancedAnalysisPanel
 from .advanced_ui import AdvancedToolsPanel
+from .gene_program_validation import validate_gene_programs
 from .importers.import_panel import ImportConvertPanel
 from .workflow import (
     DEFAULT_C_GENES,
@@ -18,8 +19,9 @@ from .workflow import (
     SPATIAL_QC_MESSAGE,
     export_result,
     optimize_genes,
-    parse_gene_text,
+    optimize_genes_multiseed,
     run_batch,
+    save_multiseed_optimizer_results,
     save_optimizer_results,
     scan_h5ad,
 )
@@ -134,6 +136,17 @@ class SpatialTXDesktop(tk.Tk):
         gene_grid.columnconfigure(0, weight=1); gene_grid.columnconfigure(1, weight=1)
         self.c_text.insert("1.0", ", ".join(DEFAULT_C_GENES))
         self.s_text.insert("1.0", ", ".join(DEFAULT_S_GENES))
+        self.gene_program_warning = ttk.Label(
+            programs,
+            text=(
+                "C-side and S-side gene programs must be mutually exclusive. "
+                "Genes present on both sides are not allowed because they may cancel in R = C - S."
+            ),
+            foreground="#4b5563",
+            wraplength=650,
+            justify="left",
+        )
+        self.gene_program_warning.pack(anchor="w", fill="x", pady=(6, 0))
 
         settings = ttk.LabelFrame(analysis_tab, text="3  Scoring and output", padding=10)
         settings.pack(fill="x")
@@ -264,13 +277,21 @@ class SpatialTXDesktop(tk.Tk):
         settings.pack(fill="x")
         optrow = ttk.Frame(settings); optrow.pack(fill="x")
         self.k_var, self.pool_var = tk.IntVar(value=8), tk.IntVar(value=40)
-        self.iter_var, self.seed_var = tk.IntVar(value=300), tk.IntVar(value=20260624)
+        self.iter_var, self.seed_var = tk.IntVar(value=1000), tk.IntVar(value=20260624)
         for index, (label, var) in enumerate((("Genes (k)", self.k_var), ("Pool", self.pool_var), ("Iterations", self.iter_var), ("Seed", self.seed_var))):
             box = ttk.Frame(optrow); box.grid(row=0, column=index, sticky="ew", padx=(0 if index == 0 else 7, 0))
             ttk.Label(box, text=label).pack(anchor="w")
             upper = 99999999 if label == "Seed" else 2000 if label == "Iterations" else 100
             ttk.Spinbox(box, from_=1 if label == "Seed" else 2, to=upper, textvariable=var, width=9).pack(fill="x")
             optrow.columnconfigure(index, weight=1)
+        stability_row = ttk.Frame(settings); stability_row.pack(fill="x", pady=(8, 0))
+        self.seed_count_var = tk.IntVar(value=10)
+        self.consensus_threshold_var = tk.DoubleVar(value=0.80)
+        ttk.Label(stability_row, text="Multi-seed runs").grid(row=0, column=0, sticky="w")
+        ttk.Spinbox(stability_row, from_=2, to=100, textvariable=self.seed_count_var, width=9).grid(row=1, column=0, sticky="ew", padx=(0, 7))
+        ttk.Label(stability_row, text="Consensus threshold").grid(row=0, column=1, sticky="w")
+        ttk.Spinbox(stability_row, from_=0.5, to=1.0, increment=0.05, textvariable=self.consensus_threshold_var, width=9).grid(row=1, column=1, sticky="ew")
+        stability_row.columnconfigure(0, weight=1); stability_row.columnconfigure(1, weight=1)
         guide = ttk.LabelFrame(settings, text="What do these options mean?", padding=8)
         guide.pack(fill="x", pady=(9, 0))
         ttk.Label(
@@ -281,8 +302,9 @@ class SpatialTXDesktop(tk.Tk):
                 "Pool: the maximum number of candidate genes considered. A larger pool broadens the search but can increase runtime "
                 "and variability. Default: 40.\n\n"
                 "Iterations: simulated-annealing swap attempts. More iterations can improve the search at the cost of runtime. "
-                "This does not change k. Default: 300.\n\n"
-                "Seed: fixes the random search path so the same input and settings reproduce the same result. Default: 20260624."
+                "This does not change k. Default: 1000.\n\n"
+                "Seed: fixes the single-run search path. For multi-seed stability it is the first sequential seed. Default: 20260624.\n\n"
+                "Multi-seed runs: repeats optimization to measure seed sensitivity. Consensus frequency measures computational stability, not biological validation."
             ),
             wraplength=410, justify="left",
         ).pack(anchor="w", fill="x")
@@ -312,7 +334,8 @@ class SpatialTXDesktop(tk.Tk):
             title = "2  C-side (immune)" if side == "C" else "3  S-side (stromal)"
             frame = ttk.LabelFrame(sides, text=title, padding=10)
             frame.grid(row=0, column=column, sticky="nsew", padx=(0, 5) if side == "C" else (5, 0))
-            ttk.Button(frame, text=f"Run QUBO for {side}-side", command=lambda value=side: self._optimize(value)).pack(fill="x")
+            ttk.Button(frame, text=f"Run single-seed QUBO for {side}-side", command=lambda value=side: self._optimize(value, False)).pack(fill="x")
+            ttk.Button(frame, text=f"Run multi-seed stability for {side}-side", command=lambda value=side: self._optimize(value, True)).pack(fill="x", pady=(5, 0))
             ttk.Label(frame, text="Selected genes", style="Sub.TLabel").pack(anchor="w", pady=(8, 2))
             selected_text = tk.Text(frame, height=8, wrap="word", state="disabled", background="#f8fafc")
             selected_text.pack(fill="both", expand=True)
@@ -345,7 +368,7 @@ class SpatialTXDesktop(tk.Tk):
             ("Creator", AUTHOR),
             ("Version", f"v{__version__}"),
             ("Build date", BUILD_DATE),
-            ("Edition", "v0.3-beta Import / Convert and robustness diagnostics"),
+            ("Edition", "v0.4-beta source release candidate based on the public v0.3-beta baseline"),
         ]
         for row, (label, value) in enumerate(details):
             ttk.Label(card, text=label, font=("Segoe UI Semibold", 9)).grid(row=row, column=0, sticky="nw", pady=4)
@@ -365,6 +388,9 @@ class SpatialTXDesktop(tk.Tk):
                 "inputs as canonical H5AD before Main Mapper analysis. The desktop edition also retains the fixed-cardinality "
                 "QUBO-inspired optimizer.\n\n"
                 "Operational regime labels are exploratory candidates and are not validated biological subtypes."
+                "\n\nv0.4-beta adds an optional Spatial Graph & Neighborhood — Experimental module for sparse graph QC, H_expr/V_expr "
+                "context fields, and exploratory neighborhood association statistics without changing the established C/S "
+                "scoring or Type A/B/C rules."
             ),
             wraplength=430, justify="left",
         ).pack(anchor="nw", fill="x")
@@ -498,7 +524,7 @@ class SpatialTXDesktop(tk.Tk):
             ("h2", "4. Metrics worth reading together\n"),
             (None, "interface_fraction — fraction of spots meeting the interface rule.\ninterface_coherence_score — interface fraction multiplied by the largest connected-component ratio; favors a coherent interface over scattered hits.\ndiffuse_fraction — fraction of diffuse-transition spots.\ntransition_burden_score — combines diffuse fraction, upper-tail gradient strength, and spatial fragmentation.\nR_dynamic_range — separation between the 90th and 10th percentiles of R.\nC/S_gene_coverage — requested program genes actually present in the h5ad feature set. Low coverage weakens interpretation.\nQC_flag — PASS, WARN, or FAIL based on gene coverage, coordinate validity, feature-name uniqueness, C/S overlap, and spot count.\n"),
             ("h2", "5. QUBO-inspired optimizer\n"),
-            (None, "The optimizer chooses exactly k genes from a bounded candidate pool. It rewards agreement with the selected side, directional R separation, spatial-gradient alignment, variance, and detection. It penalizes opposite-side correlation, low detection, and redundant gene pairs. A classical simulated-annealing search minimizes the resulting binary objective. It is QUBO-inspired, not a quantum backend.\n"),
+            (None, "The optimizer chooses exactly k genes from a bounded candidate pool. It rewards agreement with the selected side, directional R separation, spatial-gradient alignment, variance, and detection. It penalizes opposite-side correlation, low detection, and redundant gene pairs. A classical simulated-annealing search minimizes the resulting binary objective. It is QUBO-inspired, not a quantum backend. Multi-seed mode reports selection frequency, objective stability, gene-set overlap, R-field agreement, and consensus candidates. QUBO energy is lower-is-better only for otherwise identical problems, and consensus measures computational stability rather than biological validation.\n"),
             ("h1", "Advanced Analysis: rationale and interpretation\n"),
             (None, "Advanced Analysis keeps the same C(x), S(x), R(x), spatial-neighbor graph, and interface rule used by the main workflow. Its three modules describe which requested genes contribute to each program, how their expression differs between interface and non-interface spots, and how the two program fields are organized locally in space.\n"),
             ("h2", "6. Gene Composition\n"),
@@ -513,7 +539,11 @@ class SpatialTXDesktop(tk.Tk):
             (None, "Coexistence and overlap increase when both local program fields are high in the same neighborhoods. Antagonism increases when one local field dominates the other. Edge mixing measures how often neighboring C-dominant and S-dominant regions meet across the spatial graph. These indices summarize spatial organization; they do not demonstrate molecular interaction, signaling, ligand-receptor binding, or causality.\n"),
             ("h2", "9. Spatial permutation reference\n"),
             (None, "The interaction module holds coordinates and the C field fixed, randomly permutes S activation across spots, recomputes neighborhood values, and compares observed indices with that seeded null distribution. The resulting z-scores and two-sided permutation p-values ask whether the observed C/S arrangement differs from random S placement under this specific graph and scaling. They remain conditional on the selected genes, preprocessing, coordinates, neighbor definition, and sample.\n"),
-            ("h2", "10. Recommended reading order\n"),
+            ("h2", "10. Spatial Graph and Neighborhood Analysis\n"),
+            ("formula", "H_expr(x) = hypoxia-associated expression field\nV_expr(x) = endothelial/angiogenic expression proxy\nneighborhood enrichment p = (extreme_count + 1) / (n_permutations + 1)\n"),
+            (None, "The v0.4 graph workflow is optional and separate from Main Mapper scoring. It audits input state, distinguishes native-coordinate from calibrated physical radius, builds radius, Visium-lattice, or symmetric-KNN sparse graphs, reports graph/context QC, and separates same-spot overlap, neighboring-spot enrichment, and continuous edge association. H_expr and V_expr do not modify R(x), Type A/B/C labels, Type B internal patterns, or transition masks. V_expr is not vessel density, perfusion, vascularity, or functional blood supply.\n"),
+            ("note", "Graph interpretation guardrail\nNeighborhood enrichment, binary-mask association, and continuous edge statistics describe exploratory spatial association under the selected graph and permutation settings. They do not prove causal interaction, signaling, clinical relevance, or treatment response.\n"),
+            ("h2", "11. Recommended reading order\n"),
             (None, "First review QC, coordinate source, and C/S gene coverage. Then inspect gene composition for single-gene dominance, compare enrichment magnitude with FDR and effect size, and finally interpret interaction indices against their permutation reference. Repeat with plausible thresholds and gene programs. Cross-sample comparisons require harmonized preprocessing and study-level statistical design.\n"),
             ("note", "Interpretation guardrail\nRegime labels are operational candidates. Gene-program edits and optimization can change the result, so compare baseline and recomputed maps and review gene coverage. SpatialTX Studio is an exploratory research prototype and is not intended for diagnosis or treatment decisions.\n"),
         ]
@@ -585,11 +615,32 @@ class SpatialTXDesktop(tk.Tk):
         return [self.files[int(item)] for item in self.sample_tree.selection()]
 
     def _genes(self) -> tuple[list[str], list[str]]:
-        c = parse_gene_text(self.c_text.get("1.0", "end"))
-        s = parse_gene_text(self.s_text.get("1.0", "end"))
-        if not c or not s:
-            raise ValueError("Both C-side and S-side gene programs must contain at least one gene.")
-        return c, s
+        try:
+            validation = validate_gene_programs(
+                self.c_text.get("1.0", "end"),
+                self.s_text.get("1.0", "end"),
+                mode="custom",
+            )
+        except Exception as exc:
+            if hasattr(self, "gene_program_warning"):
+                self.gene_program_warning.configure(text=str(exc), foreground="#b91c1c")
+            raise
+        self.current_gene_validation = validation
+        if hasattr(self, "gene_program_warning"):
+            if validation.warnings:
+                self.gene_program_warning.configure(
+                    text=" ".join(validation.warnings),
+                    foreground="#9a3412",
+                )
+            else:
+                self.gene_program_warning.configure(
+                    text=(
+                        "C-side and S-side gene programs must be mutually exclusive. "
+                        "Genes present on both sides are not allowed because they may cancel in R = C - S."
+                    ),
+                    foreground="#4b5563",
+                )
+        return validation.normalized_c_genes, validation.normalized_s_genes
 
     def _quantiles(self) -> tuple[float, float, float]:
         values = tuple(float(v.get()) for v in (self.cq, self.sq, self.gq))
@@ -653,7 +704,7 @@ class SpatialTXDesktop(tk.Tk):
                 self.messages.put(("error", ("SpatialTX run failed", exc)))
         self._background(work)
 
-    def _optimize(self, side: str) -> None:
+    def _optimize(self, side: str, multi_seed: bool = False) -> None:
         if self.busy:
             messagebox.showinfo("SpatialTX is busy", "Wait for the current job to finish.", parent=self); return
         try:
@@ -663,19 +714,40 @@ class SpatialTXDesktop(tk.Tk):
             k, pool, iterations, seed = self.k_var.get(), self.pool_var.get(), self.iter_var.get(), self.seed_var.get()
             if k > pool:
                 raise ValueError("Selected gene count (k) cannot exceed candidate pool size.")
+            seed_count = self.seed_count_var.get()
+            consensus_threshold = self.consensus_threshold_var.get()
+            if multi_seed and seed_count < 2:
+                raise ValueError("Multi-seed optimization requires at least two seeds.")
+            if not 0 < consensus_threshold <= 1:
+                raise ValueError("Consensus threshold must be greater than 0 and at most 1.")
         except Exception as exc:
             messagebox.showwarning("Cannot optimize", str(exc), parent=self); return
-        self._write_log(f"Optimizing {side}-side genes for {selected[0].name}…")
+        mode = f"multi-seed stability ({seed_count} seeds)" if multi_seed else "single-seed"
+        self._write_log(f"Optimizing {side}-side genes for {selected[0].name}: {mode}…")
 
         def work():
             try:
-                genes, detail, summary = optimize_genes(
-                    selected[0], side, c, s, k, pool, iterations,
-                    candidate_genes=self.advanced_qubo_pool, seed=seed,
-                )
                 root = self.last_run or Path(self.output_var.get())
-                saved = save_optimizer_results(root, selected[0].stem, side, detail, summary)
-                self.messages.put(("optimizer_done", (side, genes, summary, saved)))
+                if multi_seed:
+                    genes, runs, frequency, overlap, details, summary = optimize_genes_multiseed(
+                        selected[0], side, c, s, k, pool, iterations,
+                        candidate_genes=self.advanced_qubo_pool,
+                        seed_start=seed,
+                        seed_count=seed_count,
+                        consensus_threshold=consensus_threshold,
+                        progress=lambda message: self.messages.put(("log", message)),
+                    )
+                    saved = save_multiseed_optimizer_results(
+                        root, selected[0].stem, side, runs, frequency, overlap, details, summary
+                    )
+                    self.messages.put(("optimizer_multiseed_done", (side, genes, summary, saved)))
+                else:
+                    genes, detail, summary = optimize_genes(
+                        selected[0], side, c, s, k, pool, iterations,
+                        candidate_genes=self.advanced_qubo_pool, seed=seed,
+                    )
+                    saved = save_optimizer_results(root, selected[0].stem, side, detail, summary)
+                    self.messages.put(("optimizer_done", (side, genes, summary, saved)))
             except Exception as exc:
                 self.messages.put(("error", ("Optimizer failed", exc)))
         self._background(work)
@@ -684,6 +756,17 @@ class SpatialTXDesktop(tk.Tk):
         genes = self.pending_genes.get(side)
         if not genes:
             messagebox.showinfo("QUBO optimizer", f"Run the {side}-side optimizer first.", parent=self); return
+        current_c = self.c_text.get("1.0", "end")
+        current_s = self.s_text.get("1.0", "end")
+        proposed_c = genes if side == "C" else current_c
+        proposed_s = genes if side == "S" else current_s
+        try:
+            validate_gene_programs(proposed_c, proposed_s, mode="qubo")
+        except Exception as exc:
+            if hasattr(self, "gene_program_warning"):
+                self.gene_program_warning.configure(text=str(exc), foreground="#b91c1c")
+            messagebox.showwarning("QUBO optimizer", str(exc), parent=self)
+            return
         target = self.c_text if side == "C" else self.s_text
         target.delete("1.0", "end"); target.insert("1.0", ", ".join(genes))
         status = self.qubo_c_status if side == "C" else self.qubo_s_status
@@ -913,6 +996,33 @@ class SpatialTXDesktop(tk.Tk):
                     apply_button.configure(state="normal")
                     status.configure(text=f"{len(genes)} genes selected. Review, then apply this side.")
                     self._write_log(f"Optimizer selected {len(genes)} {side}-side genes. Details: {saved}")
+                    self.progress.stop(); self.busy = False; self._set_controls(True)
+                elif kind == "optimizer_multiseed_done":
+                    side, genes, summary, saved = payload
+                    self.pending_genes[side] = genes
+                    text_widget = self.qubo_c_text if side == "C" else self.qubo_s_text
+                    apply_button = self.apply_c_button if side == "C" else self.apply_s_button
+                    status = self.qubo_c_status if side == "C" else self.qubo_s_status
+                    core = summary.get("consensus_core_genes", [])
+                    text_widget.configure(state="normal")
+                    text_widget.delete("1.0", "end")
+                    text_widget.insert(
+                        "1.0",
+                        "Consensus k-set:\n" + "\n".join(genes)
+                        + "\n\nCore genes (frequency threshold):\n"
+                        + ("\n".join(core) if core else "None at the selected threshold")
+                        + f"\n\nStability: {summary.get('stability_label', '')}"
+                        + f"\nMedian changed genes: {summary.get('median_pairwise_changed_gene_count', '')}"
+                        + f"\nMean R-field correlation: {summary.get('mean_pairwise_R_field_correlation', float('nan')):.3f}"
+                        + "\nQUBO energy: lower is better",
+                    )
+                    text_widget.configure(state="disabled")
+                    apply_button.configure(state="normal")
+                    status.configure(text=f"Multi-seed consensus selected {len(genes)} genes. Review before applying.")
+                    self._write_log(
+                        f"Multi-seed optimizer completed for {side}-side: {summary.get('stability_label')}. "
+                        f"Consensus details: {saved}"
+                    )
                     self.progress.stop(); self.busy = False; self._set_controls(True)
                 elif kind == "error":
                     title, exc = payload

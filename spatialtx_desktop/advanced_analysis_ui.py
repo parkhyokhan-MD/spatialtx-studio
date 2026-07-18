@@ -6,6 +6,7 @@ import subprocess
 import threading
 import tkinter as tk
 from pathlib import Path
+from threading import Event
 from tkinter import filedialog, messagebox, ttk
 from typing import Callable
 
@@ -13,6 +14,8 @@ import numpy as np
 import pandas as pd
 
 from .advanced_analysis import MODULE_LABELS, run_advanced_batch
+from .graph.context import DEFAULT_HYPOXIA_GENES, DEFAULT_VASCULAR_PROXY_GENES
+from .workflow import parse_gene_text
 
 
 class AdvancedAnalysisPanel(ttk.Frame):
@@ -31,6 +34,41 @@ class AdvancedAnalysisPanel(ttk.Frame):
         self.output_var = tk.StringVar(value=get_output())
         self.permutations_var = tk.IntVar(value=499)
         self.seed_var = tk.IntVar(value=20260705)
+        self.graph_method_var = tk.StringVar(value="radius")
+        self.graph_radius_var = tk.StringVar(value="")
+        self.graph_coordinate_unit_var = tk.StringVar(value="native")
+        self.graph_coordinate_scale_var = tk.StringVar(value="")
+        self.graph_scale_source_var = tk.StringVar(value="")
+        self.graph_k_var = tk.IntVar(value=6)
+        self.graph_weighting_var = tk.StringVar(value="binary")
+        self.graph_sym_var = tk.StringVar(value="union")
+        self.graph_enable_h_var = tk.BooleanVar(value=True)
+        self.graph_enable_v_var = tk.BooleanVar(value=True)
+        self.graph_h_method_var = tk.StringVar(value="z_score_mean")
+        self.graph_v_method_var = tk.StringVar(value="z_score_mean")
+        self.graph_smoothing_var = tk.StringVar(value="none")
+        self.graph_h_quantile_var = tk.StringVar(value="0.80")
+        self.graph_v_quantile_var = tk.StringVar(value="0.80")
+        self.graph_permutations_var = tk.IntVar(value=999)
+        self.graph_seed_var = tk.IntVar(value=20260713)
+        self.graph_min_coverage_var = tk.StringVar(value="0.25")
+        self.graph_min_spot_fraction_var = tk.StringVar(value="0.01")
+        self.graph_allow_low_coverage_var = tk.BooleanVar(value=False)
+        self.graph_h_genes_var = tk.StringVar(value=", ".join(DEFAULT_HYPOXIA_GENES))
+        self.graph_v_genes_var = tk.StringVar(value=", ".join(DEFAULT_VASCULAR_PROXY_GENES))
+        self.graph_label_source_var = tk.StringVar(value="")
+        self.graph_label_mode_var = tk.StringVar(value="categorical_state")
+        self.graph_mask_a_var = tk.StringVar(value="")
+        self.graph_mask_b_var = tk.StringVar(value="")
+        self.graph_x_column_var = tk.StringVar(value="")
+        self.graph_y_column_var = tk.StringVar(value="")
+        self.graph_x_mode_var = tk.StringVar(value="continuous_score")
+        self.graph_y_mode_var = tk.StringVar(value="continuous_score")
+        self.graph_permutation_scope_var = tk.StringVar(value="whole_slide")
+        self.graph_strata_column_var = tk.StringVar(value="")
+        self.graph_tissue_only_var = tk.BooleanVar(value=False)
+        self.graph_robustness_var = tk.BooleanVar(value=False)
+        self.graph_cancel_event: Event | None = None
         self.events: queue.Queue[tuple] = queue.Queue()
         self.busy = False
         self.last_run: Path | None = None
@@ -38,6 +76,9 @@ class AdvancedAnalysisPanel(ttk.Frame):
         self.selected_record: dict | None = None
         self.dashboard_counter = 0
         self._build()
+        self.graph_coordinate_unit_var.trace_add("write", self._update_coordinate_status)
+        self.graph_coordinate_scale_var.trace_add("write", self._update_coordinate_status)
+        self.graph_scale_source_var.trace_add("write", self._update_coordinate_status)
         self.after(100, self._poll)
 
     def _build(self) -> None:
@@ -77,15 +118,18 @@ class AdvancedAnalysisPanel(ttk.Frame):
         composition = ttk.Frame(self.tabs, padding=12)
         enrichment = ttk.Frame(self.tabs, padding=12)
         interaction = ttk.Frame(self.tabs, padding=12)
+        spatial_graph = ttk.Frame(self.tabs, padding=12)
         dashboard = ttk.Frame(self.tabs, padding=10)
         self.dashboard_tab = dashboard
         self.tabs.add(composition, text="Gene Composition")
         self.tabs.add(enrichment, text="Interface Enrichment")
         self.tabs.add(interaction, text="Cx/Sx Interaction")
+        self.tabs.add(spatial_graph, text="Spatial Graph & Neighborhood — Experimental")
         self.tabs.add(dashboard, text="Results Dashboard")
         self._build_composition(composition)
         self._build_enrichment(enrichment)
         self._build_interaction(interaction)
+        self._build_spatial_graph(spatial_graph)
         self._build_dashboard(dashboard)
 
         footer = ttk.Frame(self)
@@ -139,7 +183,7 @@ class AdvancedAnalysisPanel(ttk.Frame):
         settings = ttk.LabelFrame(parent, text="Spatial null model", padding=9)
         settings.pack(fill="x", pady=(11, 0))
         ttk.Label(settings, text="Permutations").grid(row=0, column=0, sticky="w")
-        ttk.Spinbox(settings, from_=0, to=9999, textvariable=self.permutations_var, width=10).grid(row=0, column=1, sticky="w", padx=(6, 18))
+        ttk.Spinbox(settings, from_=1, to=9999, textvariable=self.permutations_var, width=10).grid(row=0, column=1, sticky="w", padx=(6, 18))
         ttk.Label(settings, text="Seed").grid(row=0, column=2, sticky="w")
         ttk.Spinbox(settings, from_=0, to=2147483647, textvariable=self.seed_var, width=14).grid(row=0, column=3, sticky="w", padx=6)
         ttk.Label(
@@ -148,6 +192,185 @@ class AdvancedAnalysisPanel(ttk.Frame):
             foreground="#4b5563",
         ).grid(row=1, column=0, columnspan=4, sticky="w", pady=(7, 0))
         ttk.Button(parent, text="Run Cx/Sx Interaction", style="Primary.TButton", command=lambda: self._run("interaction")).pack(fill="x", pady=(14, 0))
+
+    def _build_spatial_graph(self, parent) -> None:
+        canvas = tk.Canvas(parent, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(parent, orient="vertical", command=canvas.yview)
+        content = ttk.Frame(canvas)
+        window = canvas.create_window((0, 0), window=content, anchor="nw")
+        content.bind("<Configure>", lambda _event: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.bind("<Configure>", lambda event: canvas.itemconfigure(window, width=event.width))
+        canvas.bind("<MouseWheel>", lambda event: canvas.yview_scroll(int(-event.delta / 120), "units"))
+        canvas.configure(yscrollcommand=scrollbar.set)
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+        parent = content
+        ttk.Label(parent, text="Spatial Graph & Neighborhood — Experimental", font=("Segoe UI Semibold", 13)).pack(anchor="w")
+        ttk.Label(
+            parent,
+            text=(
+                "These analyses provide exploratory spatial association and organization summaries. "
+                "They do not establish causal, physical, or biological cell-cell interactions."
+            ),
+            foreground="#b45309",
+            wraplength=890,
+            justify="left",
+        ).pack(anchor="w", fill="x", pady=(4, 6))
+        ttk.Label(
+            parent,
+            text=(
+                "v0.4 optional context module. It builds a sparse spatial graph, computes graph QC, optional H_expr and V_expr "
+                "context fields, neighborhood enrichment, binary-mask association, and continuous edge statistics. "
+                "It does not alter R(x), Type A/B/C calls, or existing Main Mapper outputs."
+            ),
+            wraplength=890,
+            justify="left",
+        ).pack(anchor="w", fill="x", pady=(4, 10))
+
+        audit_box = ttk.LabelFrame(parent, text="1  Input audit", padding=9)
+        audit_box.pack(fill="x")
+        ttk.Label(
+            audit_box,
+            text="Every sample is audited without altering AnnData.X. JSON/CSV record preprocessing guess, platform, matrix storage, coordinates, tissue metadata, duplicate names, library-size summaries, and warnings.",
+            foreground="#4b5563", wraplength=850, justify="left",
+        ).pack(anchor="w")
+
+        graph_box = ttk.LabelFrame(parent, text="2  Graph setup", padding=9)
+        graph_box.pack(fill="x")
+        row = ttk.Frame(graph_box); row.pack(fill="x")
+        ttk.Label(row, text="Method").grid(row=0, column=0, sticky="w")
+        ttk.Combobox(row, textvariable=self.graph_method_var, values=("radius", "lattice", "knn"), state="readonly", width=12).grid(row=1, column=0, sticky="ew")
+        ttk.Label(row, text="Radius").grid(row=0, column=1, sticky="w", padx=(8, 0))
+        ttk.Entry(row, textvariable=self.graph_radius_var, width=10).grid(row=1, column=1, sticky="ew", padx=(8, 0))
+        ttk.Label(row, text="K").grid(row=0, column=2, sticky="w", padx=(8, 0))
+        ttk.Spinbox(row, from_=1, to=50, textvariable=self.graph_k_var, width=7).grid(row=1, column=2, sticky="ew", padx=(8, 0))
+        ttk.Label(row, text="Weighting").grid(row=0, column=3, sticky="w", padx=(8, 0))
+        ttk.Combobox(row, textvariable=self.graph_weighting_var, values=("binary", "inverse_distance", "gaussian"), state="readonly", width=16).grid(row=1, column=3, sticky="ew", padx=(8, 0))
+        ttk.Label(row, text="KNN sym.").grid(row=0, column=4, sticky="w", padx=(8, 0))
+        ttk.Combobox(row, textvariable=self.graph_sym_var, values=("union", "mutual"), state="readonly", width=10).grid(row=1, column=4, sticky="ew", padx=(8, 0))
+        for column in range(5):
+            row.columnconfigure(column, weight=1)
+        calibration = ttk.Frame(graph_box); calibration.pack(fill="x", pady=(7, 0))
+        ttk.Label(calibration, text="Coordinate unit").grid(row=0, column=0, sticky="w")
+        ttk.Combobox(calibration, textvariable=self.graph_coordinate_unit_var, values=("native", "pixel", "micrometer"), state="readonly", width=13).grid(row=1, column=0, sticky="ew")
+        ttk.Label(calibration, text="µm per coordinate unit").grid(row=0, column=1, sticky="w", padx=(8, 0))
+        ttk.Entry(calibration, textvariable=self.graph_coordinate_scale_var, width=12).grid(row=1, column=1, sticky="ew", padx=(8, 0))
+        ttk.Label(calibration, text="Scale source").grid(row=0, column=2, sticky="w", padx=(8, 0))
+        ttk.Entry(calibration, textvariable=self.graph_scale_source_var).grid(row=1, column=2, sticky="ew", padx=(8, 0))
+        calibration.columnconfigure(2, weight=1)
+        self.graph_coordinate_status = ttk.Label(graph_box, text="Coordinate unit: native", foreground="#4b5563")
+        self.graph_coordinate_status.pack(anchor="w", pady=(5, 0))
+        ttk.Label(
+            graph_box,
+            text="Radius graph is the default. It is a calibrated physical-radius graph only when a valid micrometer scale and scale source are recorded. KNN remains an auxiliary robustness graph.",
+            foreground="#4b5563",
+            wraplength=850,
+        ).pack(anchor="w", pady=(7, 0))
+
+        graph_qc_box = ttk.LabelFrame(parent, text="3  Graph QC", padding=9)
+        graph_qc_box.pack(fill="x", pady=(9, 0))
+        ttk.Label(graph_qc_box, text="Exports degree, isolated fraction, connected components, edge-distance quantiles, duplicate coordinates, graph density, long-edge warnings, and requested/effective graph provenance.", foreground="#4b5563", wraplength=850).pack(anchor="w")
+
+        context = ttk.LabelFrame(parent, text="4  Context fields", padding=9)
+        context.pack(fill="x", pady=(9, 0))
+        top = ttk.Frame(context); top.pack(fill="x")
+        ttk.Checkbutton(top, text="Enable H_expr hypoxia-associated expression field", variable=self.graph_enable_h_var).grid(row=0, column=0, sticky="w")
+        ttk.Checkbutton(top, text="Enable V_expr endothelial/angiogenic expression proxy", variable=self.graph_enable_v_var).grid(row=0, column=1, sticky="w", padx=(10, 0))
+        ttk.Label(top, text="Smoothing").grid(row=0, column=2, sticky="w", padx=(10, 0))
+        ttk.Combobox(top, textvariable=self.graph_smoothing_var, values=("none", "graph_mean"), state="readonly", width=12).grid(row=0, column=3, sticky="w", padx=(5, 0))
+        ttk.Label(
+            context,
+            text=(
+                "H_expr is a hypoxia-associated expression field. V_expr is an endothelial/angiogenic expression proxy. "
+                "V_expr is not a direct measure of vessel density, perfusion, or functional blood supply."
+            ),
+            foreground="#4b5563",
+            wraplength=850,
+            justify="left",
+        ).pack(anchor="w", pady=(7, 0))
+        ttk.Label(
+            context,
+            text=(
+                "Graph-smoothed context fields are intended for visualization and exploratory sensitivity analysis. "
+                "Association statistics computed on fields smoothed over the same graph may be inflated and should not "
+                "be interpreted as independent confirmatory evidence."
+            ),
+            foreground="#b45309",
+            wraplength=850,
+            justify="left",
+        ).pack(anchor="w", pady=(5, 0))
+        methods = ttk.Frame(context); methods.pack(fill="x", pady=(8, 0))
+        ttk.Label(methods, text="H method").grid(row=0, column=0, sticky="w")
+        ttk.Combobox(methods, textvariable=self.graph_h_method_var, values=("raw_mean", "z_score_mean", "rank_quantile"), state="readonly", width=15).grid(row=1, column=0, sticky="ew")
+        ttk.Label(methods, text="H-high q").grid(row=0, column=1, sticky="w", padx=(8, 0))
+        ttk.Entry(methods, textvariable=self.graph_h_quantile_var, width=8).grid(row=1, column=1, sticky="ew", padx=(8, 0))
+        ttk.Label(methods, text="V method").grid(row=0, column=2, sticky="w", padx=(8, 0))
+        ttk.Combobox(methods, textvariable=self.graph_v_method_var, values=("raw_mean", "z_score_mean", "rank_quantile"), state="readonly", width=15).grid(row=1, column=2, sticky="ew", padx=(8, 0))
+        ttk.Label(methods, text="V-high q").grid(row=0, column=3, sticky="w", padx=(8, 0))
+        ttk.Entry(methods, textvariable=self.graph_v_quantile_var, width=8).grid(row=1, column=3, sticky="ew", padx=(8, 0))
+        ttk.Label(methods, text="Min coverage").grid(row=0, column=4, sticky="w", padx=(8, 0))
+        ttk.Entry(methods, textvariable=self.graph_min_coverage_var, width=8).grid(row=1, column=4, sticky="ew", padx=(8, 0))
+        ttk.Label(methods, text="Min spot fraction").grid(row=0, column=5, sticky="w", padx=(8, 0))
+        ttk.Entry(methods, textvariable=self.graph_min_spot_fraction_var, width=8).grid(row=1, column=5, sticky="ew", padx=(8, 0))
+        ttk.Checkbutton(methods, text="Allow low coverage", variable=self.graph_allow_low_coverage_var).grid(row=1, column=6, sticky="w", padx=(8, 0))
+        for column in range(7):
+            methods.columnconfigure(column, weight=1)
+        gene_rows = ttk.Frame(context); gene_rows.pack(fill="x", pady=(8, 0))
+        ttk.Label(gene_rows, text="H genes").grid(row=0, column=0, sticky="nw")
+        ttk.Entry(gene_rows, textvariable=self.graph_h_genes_var).grid(row=0, column=1, sticky="ew", padx=(7, 0))
+        ttk.Label(gene_rows, text="V genes").grid(row=1, column=0, sticky="nw", pady=(5, 0))
+        ttk.Entry(gene_rows, textvariable=self.graph_v_genes_var).grid(row=1, column=1, sticky="ew", padx=(7, 0), pady=(5, 0))
+        gene_rows.columnconfigure(1, weight=1)
+
+        overlap = ttk.LabelFrame(parent, text="5  Same-spot overlap", padding=9); overlap.pack(fill="x", pady=(9, 0))
+        ttk.Label(overlap, text="Optional binary mask A column").grid(row=0, column=0, sticky="w")
+        ttk.Entry(overlap, textvariable=self.graph_mask_a_var).grid(row=1, column=0, sticky="ew")
+        ttk.Label(overlap, text="Optional binary mask B column").grid(row=0, column=1, sticky="w", padx=(8, 0))
+        ttk.Entry(overlap, textvariable=self.graph_mask_b_var).grid(row=1, column=1, sticky="ew", padx=(8, 0))
+        overlap.columnconfigure(0, weight=1); overlap.columnconfigure(1, weight=1)
+
+        neighborhood = ttk.LabelFrame(parent, text="6  Neighborhood enrichment", padding=9); neighborhood.pack(fill="x", pady=(9, 0))
+        ttk.Label(neighborhood, text="Optional adata.obs categorical state column (blank = SpatialTX spot-level states)").grid(row=0, column=0, sticky="w")
+        ttk.Entry(neighborhood, textvariable=self.graph_label_source_var).grid(row=1, column=0, sticky="ew")
+        ttk.Combobox(neighborhood, textvariable=self.graph_label_mode_var, values=("categorical_state", "binary_mask"), state="readonly", width=18).grid(row=1, column=1, sticky="ew", padx=(8, 0))
+        neighborhood.columnconfigure(0, weight=1)
+
+        continuous = ttk.LabelFrame(parent, text="7  Continuous edge association", padding=9); continuous.pack(fill="x", pady=(9, 0))
+        ttk.Label(continuous, text="Optional X column").grid(row=0, column=0, sticky="w")
+        ttk.Entry(continuous, textvariable=self.graph_x_column_var).grid(row=1, column=0, sticky="ew")
+        ttk.Combobox(continuous, textvariable=self.graph_x_mode_var, values=("continuous_score", "proportion_composition"), state="readonly", width=21).grid(row=1, column=1, padx=(6, 0))
+        ttk.Label(continuous, text="Optional Y column").grid(row=0, column=2, sticky="w", padx=(8, 0))
+        ttk.Entry(continuous, textvariable=self.graph_y_column_var).grid(row=1, column=2, sticky="ew", padx=(8, 0))
+        ttk.Combobox(continuous, textvariable=self.graph_y_mode_var, values=("continuous_score", "proportion_composition"), state="readonly", width=21).grid(row=1, column=3, padx=(6, 0))
+        continuous.columnconfigure(0, weight=1); continuous.columnconfigure(2, weight=1)
+
+        analysis = ttk.LabelFrame(parent, text="8  Permutation scope", padding=9); analysis.pack(fill="x", pady=(9, 0))
+        ttk.Label(analysis, text="Scope").grid(row=0, column=0, sticky="w")
+        ttk.Combobox(analysis, textvariable=self.graph_permutation_scope_var, values=("whole_slide", "within_connected_components", "within_user_strata"), state="readonly", width=28).grid(row=1, column=0, sticky="ew")
+        ttk.Label(analysis, text="Stratification column").grid(row=0, column=1, sticky="w", padx=(8, 0))
+        ttk.Entry(analysis, textvariable=self.graph_strata_column_var).grid(row=1, column=1, sticky="ew", padx=(8, 0))
+        ttk.Label(analysis, text="Permutations").grid(row=0, column=2, sticky="w", padx=(8, 0))
+        ttk.Spinbox(analysis, from_=1, to=99999, textvariable=self.graph_permutations_var, width=10).grid(row=1, column=2, sticky="ew", padx=(8, 0))
+        ttk.Label(analysis, text="Seed").grid(row=0, column=3, sticky="w", padx=(8, 0))
+        ttk.Spinbox(analysis, from_=0, to=2147483647, textvariable=self.graph_seed_var, width=14).grid(row=1, column=3, sticky="ew", padx=(8, 0))
+        ttk.Checkbutton(analysis, text="Restrict to in_tissue=1 when available", variable=self.graph_tissue_only_var).grid(row=2, column=0, columnspan=2, sticky="w", pady=(6, 0))
+        ttk.Label(analysis, text="Disconnected tissue fragments: within_connected_components is recommended. Permutations never cross samples.", foreground="#4b5563").grid(row=2, column=2, columnspan=2, sticky="w", pady=(6, 0))
+        analysis.columnconfigure(0, weight=1); analysis.columnconfigure(1, weight=1)
+
+        robustness = ttk.LabelFrame(parent, text="9  Robustness comparison", padding=9); robustness.pack(fill="x", pady=(9, 0))
+        ttk.Checkbutton(robustness, text="Compare radius, lattice, and KNN association direction (optional)", variable=self.graph_robustness_var).pack(anchor="w")
+        ttk.Label(robustness, text="The comparison is supplementary and never replaces the primary graph result.", foreground="#4b5563").pack(anchor="w", pady=(4, 0))
+
+        actions = ttk.Frame(parent)
+        actions.pack(fill="x", pady=(10, 0))
+        ttk.Button(actions, text="Run Spatial Graph & Neighborhood", style="Primary.TButton", command=self._run_spatial_graph).pack(side="left", fill="x", expand=True)
+        self.graph_cancel_button = ttk.Button(actions, text="Cancel analysis", command=self._cancel_spatial_graph, state="disabled")
+        self.graph_cancel_button.pack(side="left", padx=(8, 0))
+
+        preview = ttk.LabelFrame(parent, text="10  Export preview", padding=8)
+        preview.pack(fill="both", expand=True, pady=(9, 0))
+        self.graph_preview = tk.Text(preview, height=8, wrap="word", state="disabled", background="#f8fafc")
+        self.graph_preview.pack(fill="both", expand=True)
 
     def _build_dashboard(self, parent) -> None:
         heading = ttk.Frame(parent)
@@ -355,15 +578,142 @@ class AdvancedAnalysisPanel(ttk.Frame):
         if value:
             self.output_var.set(value)
 
+    def _append_graph_preview(self, text: str) -> None:
+        self.graph_preview.configure(state="normal")
+        self.graph_preview.insert("end", text.rstrip() + "\n")
+        self.graph_preview.see("end")
+        self.graph_preview.configure(state="disabled")
+
+    def _update_coordinate_status(self, *_args) -> None:
+        if not hasattr(self, "graph_coordinate_status"):
+            return
+        unit = self.graph_coordinate_unit_var.get().strip() or "native"
+        scale = self.graph_coordinate_scale_var.get().strip()
+        source = self.graph_scale_source_var.get().strip()
+        if unit == "micrometer" and source:
+            text = "Coordinate unit: micrometer, calibrated"
+        elif unit in {"native", "pixel"} and scale and source:
+            text = f"Coordinate unit: {unit}; calibrated to micrometer"
+        elif unit == "micrometer":
+            text = "Coordinate unit: micrometer, calibration metadata incomplete"
+        else:
+            text = f"Coordinate unit: {unit}"
+        self.graph_coordinate_status.configure(text=text)
+
+    def _build_graph_config(self):
+        from .graph.builder import GraphBuildConfig
+        from .graph.runner import SpatialGraphAnalysisConfig
+
+        radius_text = self.graph_radius_var.get().strip()
+        radius = float(radius_text) if radius_text else None
+        scale_text = self.graph_coordinate_scale_var.get().strip()
+        coordinate_scale = float(scale_text) if scale_text else None
+        label_source = self.graph_label_source_var.get().strip() or "auto_spatialtx_states"
+        return SpatialGraphAnalysisConfig(
+            graph=GraphBuildConfig(
+                method=self.graph_method_var.get(),
+                radius=radius,
+                k=int(self.graph_k_var.get()),
+                weighting=self.graph_weighting_var.get(),
+                symmetrization=self.graph_sym_var.get(),
+                random_seed=int(self.graph_seed_var.get()),
+                coordinate_unit=self.graph_coordinate_unit_var.get(),
+                coordinate_scale=coordinate_scale,
+                scale_source=self.graph_scale_source_var.get().strip(),
+            ),
+            enable_h=bool(self.graph_enable_h_var.get()),
+            enable_v=bool(self.graph_enable_v_var.get()),
+            h_genes=parse_gene_text(self.graph_h_genes_var.get()),
+            v_genes=parse_gene_text(self.graph_v_genes_var.get()),
+            h_score_method=self.graph_h_method_var.get(),
+            v_score_method=self.graph_v_method_var.get(),
+            h_high_quantile=float(self.graph_h_quantile_var.get()),
+            v_high_quantile=float(self.graph_v_quantile_var.get()),
+            context_smoothing=self.graph_smoothing_var.get(),
+            min_gene_coverage=float(self.graph_min_coverage_var.get()),
+            context_min_spot_fraction=float(self.graph_min_spot_fraction_var.get()),
+            allow_low_coverage=bool(self.graph_allow_low_coverage_var.get()),
+            label_source=label_source,
+            label_mode=self.graph_label_mode_var.get(),
+            user_mask_a_column=self.graph_mask_a_var.get().strip(),
+            user_mask_b_column=self.graph_mask_b_var.get().strip(),
+            continuous_x_column=self.graph_x_column_var.get().strip(),
+            continuous_y_column=self.graph_y_column_var.get().strip(),
+            continuous_x_mode=self.graph_x_mode_var.get(),
+            continuous_y_mode=self.graph_y_mode_var.get(),
+            permutation_scope=self.graph_permutation_scope_var.get(),
+            stratification_column=self.graph_strata_column_var.get().strip(),
+            tissue_only_restriction=bool(self.graph_tissue_only_var.get()),
+            run_graph_robustness=bool(self.graph_robustness_var.get()),
+            permutations=int(self.graph_permutations_var.get()),
+            seed=int(self.graph_seed_var.get()),
+        )
+
     def _set_enabled(self, enabled: bool) -> None:
         for child in self.winfo_children():
             self._set_widget_enabled(child, enabled)
 
     def _set_widget_enabled(self, widget, enabled: bool) -> None:
-        if isinstance(widget, (ttk.Button, ttk.Entry, ttk.Spinbox, ttk.Notebook)):
+        if isinstance(widget, (ttk.Button, ttk.Entry, ttk.Spinbox, ttk.Combobox, ttk.Checkbutton, ttk.Notebook)):
             widget.state(["!disabled"] if enabled else ["disabled"])
         for child in widget.winfo_children():
             self._set_widget_enabled(child, enabled)
+
+    def _run_spatial_graph(self) -> None:
+        if self.busy:
+            return
+        try:
+            samples = self.get_samples()
+            if not samples:
+                raise ValueError("Select at least one scanned h5ad sample in the main sample list.")
+            c_genes, s_genes = self.get_genes()
+            c_q, s_q, g_q = self.get_quantiles()
+            output = self.output_var.get().strip()
+            if not output:
+                raise ValueError("Choose an output root.")
+            config = self._build_graph_config()
+            config.c_q, config.s_q, config.g_q = c_q, s_q, g_q
+        except Exception as exc:
+            messagebox.showwarning("Spatial Graph & Neighborhood", str(exc), parent=self)
+            return
+        self.busy = True
+        self.graph_cancel_event = Event()
+        self._set_enabled(False)
+        self.graph_cancel_button.state(["!disabled"])
+        self.progress.start(12)
+        self.status.configure(text="Running Spatial Graph & Neighborhood...")
+        self.graph_preview.configure(state="normal")
+        self.graph_preview.delete("1.0", "end")
+        self.graph_preview.configure(state="disabled")
+        self._append_graph_preview("Started Spatial Graph and Neighborhood Analysis.")
+
+        def progress(message: str) -> None:
+            self.events.put(("graph_progress", message))
+
+        def work() -> None:
+            try:
+                from .graph.runner import run_spatial_graph_neighborhood_batch
+
+                run_dir, manifest = run_spatial_graph_neighborhood_batch(
+                    samples,
+                    output,
+                    c_genes,
+                    s_genes,
+                    config,
+                    progress,
+                    self.graph_cancel_event,
+                )
+                self.events.put(("graph_done", run_dir, manifest))
+            except Exception as exc:
+                self.events.put(("graph_error", exc))
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _cancel_spatial_graph(self) -> None:
+        if self.graph_cancel_event is not None:
+            self.graph_cancel_event.set()
+            self.status.configure(text="Cancellation requested; finishing current sample if already running...")
+            self._append_graph_preview("Cancellation requested.")
 
     def _run(self, module: str) -> None:
         if self.busy:
@@ -415,6 +765,9 @@ class AdvancedAnalysisPanel(ttk.Frame):
                 event = self.events.get_nowait()
                 if event[0] == "progress":
                     self.status.configure(text=event[1])
+                elif event[0] == "graph_progress":
+                    self.status.configure(text=event[1])
+                    self._append_graph_preview(event[1])
                 elif event[0] == "done":
                     _, module, results = event
                     self.busy = False; self._set_enabled(True); self.progress.stop()
@@ -430,6 +783,28 @@ class AdvancedAnalysisPanel(ttk.Frame):
                     self.status.configure(text=f"{label} complete: {successes}/{total} result(s). Dashboard updated.")
                     if successes != total:
                         messagebox.showwarning("Advanced Analysis", f"Completed with {total - successes} failed result(s). See the dashboard and run manifests.", parent=self)
+                elif event[0] == "graph_done":
+                    _, run_dir, manifest = event
+                    self.busy = False; self._set_enabled(True); self.progress.stop()
+                    self.graph_cancel_button.state(["disabled"])
+                    self.graph_cancel_event = None
+                    self.last_run = run_dir
+                    self.open_button.configure(state="normal")
+                    ok = int((manifest["status"] == "ok").sum()) if "status" in manifest else 0
+                    total = len(manifest)
+                    self.status.configure(text=f"Spatial Graph & Neighborhood complete: {ok}/{total} sample(s).")
+                    self._append_graph_preview(f"Output folder: {run_dir}")
+                    self._append_graph_preview(manifest.to_string(index=False))
+                    if ok != total:
+                        messagebox.showwarning("Spatial Graph & Neighborhood", f"Completed with {total - ok} failed or cancelled sample(s). See the manifest.", parent=self)
+                elif event[0] == "graph_error":
+                    _, exc = event
+                    self.busy = False; self._set_enabled(True); self.progress.stop()
+                    self.graph_cancel_button.state(["disabled"])
+                    self.graph_cancel_event = None
+                    self.status.configure(text="Spatial Graph & Neighborhood failed.")
+                    self._append_graph_preview(f"Error: {exc}")
+                    messagebox.showerror("Spatial Graph & Neighborhood", str(exc), parent=self)
                 else:
                     _, module, exc = event
                     self.busy = False; self._set_enabled(True); self.progress.stop()

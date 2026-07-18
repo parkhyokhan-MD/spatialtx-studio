@@ -50,11 +50,7 @@ distance:
 
 output:
   path: null
-  formats:
-    - csv
-    - png
-    - log
-    - config
+  formats: [csv, png, log, config]
 
 gene_programs:
   C_FIXED: [CD8A, CD8B, NKG7, PRF1, GZMB, IFNG]
@@ -63,3 +59,4 @@ gene_programs:
   B_CANDIDATES: [COL1A1, COL1A2, COL3A1, FN1, LUM, DCN, POSTN, ACTA2, TAGLN, FAP, THY1]
   CUSTOM_C: []
   CUSTOM_B: []
+
