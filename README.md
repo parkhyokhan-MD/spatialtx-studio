@@ -83,7 +83,7 @@ Generated figures are saved under:
 └─ spatial_graph_neighborhood_<timestamp>/
    └─ figures/
       └─ <sample>_H_V_association_map.png
-...
+```
 
 ## Import / Convert
 
