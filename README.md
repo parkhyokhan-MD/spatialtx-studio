@@ -64,6 +64,26 @@ See [README_DESKTOP.md](README_DESKTOP.md) for the desktop workflow and [README_
 
 SpatialTX Studio displays C-side and S-side expression fields, the C−S balance field, local gradients, localized interface-like candidates, and diffuse-transition patterns.
 
+### Example output: H/V expression context
+
+![PDAC_P4 H/V expression-context joint state](docs/screenshots/pdac_p4_h_v_expression_context_joint_state.png)
+
+Example output from the optional **Spatial Graph & Neighborhood — Experimental** workflow.
+
+- `H_expr`: hypoxia-associated expression field
+- `V_expr`: endothelial/angiogenic expression proxy
+- Joint-state colors indicate whether each spot exceeds the selected H/V context thresholds.
+
+These expression-context states are exploratory. They do not constitute validated measurements of tissue hypoxia, vessel density, perfusion, vascularity, or functional blood supply.
+
+Generated figures are saved under:
+
+```text
+<selected output folder>/
+└─ spatial_graph_neighborhood_<timestamp>/
+   └─ figures/
+      └─ <sample>_H_V_association_map.png
+
 ## Import / Convert
 
 The Main Mapper remains H5AD-centered. Raw data must first be converted in **Import / Convert**, then opened in the Main Mapper like any other `.h5ad` input.
