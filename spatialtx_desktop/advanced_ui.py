@@ -15,7 +15,6 @@ from .advanced import (
     export_fasta_template,
     export_qubo_pool,
     filter_receptor_membrane,
-    scan_pre_post_pairs,
 )
 
 
@@ -24,8 +23,8 @@ class AdvancedToolsPanel(ttk.Frame):
         super().__init__(parent)
         self.on_qubo_pool = on_qubo_pool
         self.latest_table: Path | None = None
-        self.pre_h5ad = tk.StringVar()
-        self.post_h5ad = tk.StringVar()
+        self.reference_h5ad = tk.StringVar()
+        self.target_h5ad = tk.StringVar()
         self.input_table = tk.StringVar()
         self.enabled_var = tk.BooleanVar(value=False)
         self.busy = False
@@ -47,6 +46,16 @@ class AdvancedToolsPanel(ttk.Frame):
             text="Raw data import has moved to Import / Convert.",
             foreground="#155e75",
         ).pack(anchor="w", pady=(7, 0))
+        ttk.Label(
+            self,
+            text=(
+                "For C/S/R spatial sample or group comparisons, use Comparative Analysis. "
+                "The tools below generate exploratory gene candidates and do not perform spatial comparative inference."
+            ),
+            foreground="#7c2d12",
+            wraplength=900,
+            justify="left",
+        ).pack(anchor="w", fill="x", pady=(3, 0))
 
         self.body = ttk.Frame(self)
         self.body.pack(fill="both", expand=True, pady=(8, 0))
@@ -72,7 +81,7 @@ class AdvancedToolsPanel(ttk.Frame):
         ttk.Label(
             guide,
             text=(
-                "A3 — Exploratory candidate comparison: compares two conditions (for example pre/post, control/treated, or region A/B) using "
+                "A3 — Exploratory expression candidate contrast (non-spatial): ranks shared genes between a Reference and Target H5AD using "
                 "normalized mean-expression contrast and detection-fraction change. Output genes are condition-associated exploratory candidates.\n\n"
                 "A4 — Lightweight filtering: prioritizes receptor-like, membrane-associated, transporter-like, and surface-like candidates "
                 "using gene-symbol heuristics. It is a literature-review and experiment-prioritization aid, not protein-function validation.\n\n"
@@ -85,25 +94,21 @@ class AdvancedToolsPanel(ttk.Frame):
             guide,
             text=(
                 "These tools do not validate drug response, receptor function, ligand-receptor binding, read-level evidence, "
-                "or clinical biomarkers. A3 currently performs expression/detection contrast; spatial direction is evaluated downstream by QUBO."
+                "or clinical biomarkers. A3 does not compare C/S/R fields, transition metrics, topology, or registered spots. "
+                "Any later QUBO selection is a separate spatially informed optimization step, not validation of the contrast."
             ),
             foreground="#9a3412", wraplength=780, justify="left",
         ).pack(anchor="w", fill="x", pady=(7, 0))
-        pairscan = ttk.LabelFrame(parent, text="A1  Scan pre/post pairs", padding=8); pairscan.pack(fill="x")
-        self.pair_root = tk.StringVar(value=str(Path.cwd()))
-        ttk.Entry(pairscan, textvariable=self.pair_root).pack(side="left", fill="x", expand=True)
-        ttk.Button(pairscan, text="Folder...", command=self._browse_pair_root).pack(side="left", padx=5)
-        ttk.Button(pairscan, text="Scan pairs", command=self._scan_pairs).pack(side="left")
-        self.pair_tree = ttk.Treeview(parent, columns=("pair", "pre", "post"), show="headings", height=5, selectmode="browse")
-        for column, title, width in (("pair", "Pair", 120), ("pre", "Pre h5ad", 300), ("post", "Post h5ad", 300)):
-            self.pair_tree.heading(column, text=title); self.pair_tree.column(column, width=width)
-        self.pair_tree.pack(fill="x", pady=(8, 0)); self.pair_tree.bind("<<TreeviewSelect>>", self._use_pair)
-        paths = ttk.LabelFrame(parent, text="Comparison inputs", padding=8); paths.pack(fill="x", pady=(8, 0))
-        ttk.Label(paths, text="Pre h5ad").grid(row=0, column=0, sticky="w"); ttk.Entry(paths, textvariable=self.pre_h5ad).grid(row=0, column=1, sticky="ew", padx=5)
-        ttk.Label(paths, text="Post h5ad").grid(row=1, column=0, sticky="w"); ttk.Entry(paths, textvariable=self.post_h5ad).grid(row=1, column=1, sticky="ew", padx=5, pady=(4, 0))
+        paths = ttk.LabelFrame(parent, text="A3  Expression candidate inputs — non-spatial", padding=8); paths.pack(fill="x", pady=(8, 0))
+        ttk.Label(paths, text="Reference H5AD").grid(row=0, column=0, sticky="w")
+        ttk.Entry(paths, textvariable=self.reference_h5ad).grid(row=0, column=1, sticky="ew", padx=5)
+        ttk.Button(paths, text="Browse...", command=self._browse_reference_h5ad).grid(row=0, column=2, sticky="ew")
+        ttk.Label(paths, text="Target H5AD").grid(row=1, column=0, sticky="w", pady=(4, 0))
+        ttk.Entry(paths, textvariable=self.target_h5ad).grid(row=1, column=1, sticky="ew", padx=5, pady=(4, 0))
+        ttk.Button(paths, text="Browse...", command=self._browse_target_h5ad).grid(row=1, column=2, sticky="ew", pady=(4, 0))
         paths.columnconfigure(1, weight=1)
         buttons = ttk.Frame(parent); buttons.pack(fill="x", pady=(8, 0))
-        ttk.Button(buttons, text="A3  Candidate comparison", command=self._compare).pack(side="left")
+        ttk.Button(buttons, text="A3  Run expression candidate contrast", command=self._compare).pack(side="left")
         ttk.Button(buttons, text="A4  Receptor/membrane filter", command=self._filter).pack(side="left", padx=5)
         ttk.Button(buttons, text="A5  Export to QUBO", command=self._export_qubo).pack(side="left")
         self.candidate_report = tk.Text(parent, height=9, wrap="word", state="disabled", background="#f8fafc")
@@ -203,27 +208,20 @@ class AdvancedToolsPanel(ttk.Frame):
 
     def _browse_output(self):
         value = filedialog.askdirectory(title="Advanced output folder"); self.output_var.set(value or self.output_var.get())
-    def _browse_pair_root(self):
-        value = filedialog.askdirectory(title="Folder containing pre/post h5ad files"); self.pair_root.set(value or self.pair_root.get())
+    def _browse_reference_h5ad(self):
+        value = filedialog.askopenfilename(title="Select Reference H5AD", filetypes=[("AnnData H5AD", "*.h5ad")])
+        self.reference_h5ad.set(value or self.reference_h5ad.get())
+    def _browse_target_h5ad(self):
+        value = filedialog.askopenfilename(title="Select Target H5AD", filetypes=[("AnnData H5AD", "*.h5ad")])
+        self.target_h5ad.set(value or self.target_h5ad.get())
     def _browse_table(self):
         value = filedialog.askopenfilename(title="Select candidate CSV", filetypes=[("CSV", "*.csv")]); self.input_table.set(value or self.input_table.get())
 
-    def _scan_pairs(self):
-        root = self.pair_root.get()
-        self._background("Pre/post pair scan", lambda: scan_pre_post_pairs(root), self._show_pairs)
-    def _show_pairs(self, table):
-        self.pair_tree.delete(*self.pair_tree.get_children())
-        for i, row in table.iterrows(): self.pair_tree.insert("", "end", iid=str(i), values=(row["pair"], row["pre_h5ad"], row["post_h5ad"]))
-        self._write(self.candidate_report, f"Found {len(table)} complete pre/post pair(s).")
-    def _use_pair(self, _event=None):
-        selected = self.pair_tree.selection()
-        if selected:
-            values = self.pair_tree.item(selected[0], "values"); self.pre_h5ad.set(values[1]); self.post_h5ad.set(values[2])
     def _compare(self):
-        pre_path, post_path = self.pre_h5ad.get(), self.post_h5ad.get()
+        reference_path, target_path = self.reference_h5ad.get(), self.target_h5ad.get()
         output = self._new_output("pre_post_candidate_comparison.csv")
-        def done(table): self.latest_table = output; self.input_table.set(str(output)); self._write(self.candidate_report, f"Saved {len(table)} gene candidates:\n{output}\n\n{table.head(12).to_string(index=False)}")
-        self._background("Pre/post candidate comparison", lambda: compare_pre_post(pre_path, post_path, output), done)
+        def done(table): self.latest_table = output; self.input_table.set(str(output)); self._write(self.candidate_report, f"Saved {len(table)} exploratory gene candidates:\n{output}\n\n{table.head(12).to_string(index=False)}")
+        self._background("Non-spatial expression candidate contrast", lambda: compare_pre_post(reference_path, target_path, output), done)
     def _filter(self):
         source = self.latest_table or Path(self.input_table.get()); output = self._new_output("receptor_membrane_candidates.csv")
         def done(table): self.latest_table = output; self.input_table.set(str(output)); self._write(self.candidate_report, f"Saved {len(table)} filtered candidates:\n{output}\n\n{table.head(12).to_string(index=False)}")

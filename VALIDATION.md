@@ -1,5 +1,26 @@
 # SpatialTX Studio Desktop validation record
 
+## v0.5-beta Comparative Analysis
+
+Validation date: 2026-08-04
+
+- Prepared a clean public source release separately from the internal development working copy.
+- Added comparative validation, matching, metrics, statistics, plotting, reporting, shared runner, CLI, and GUI components.
+- Added synthetic GEO-flat importer coverage for arbitrary paths, spaces/non-ASCII names, gzip, exact prefix grouping, required components, duplicates, matrix orientation/dimensions, position/scalefactor validation, source immutability, output collision, reporting, CLI, GUI mounting, and user-confirmed manifest handoff.
+- Added Box 3 comparative coverage for sample scale, normalized topology, zero/near-zero percent change, symmetric percent change, raw-versus-normalized warnings, centralized categories, pooled H/V thresholds, robust H/V enrichment, centered-mean deprecation, pairwise regime card, paired matrix preservation, figure metadata/legends, GUI warnings, raw-delta preservation, and prohibited-claim checks.
+- Current full suite: **149 passed**. Existing importer, Main Mapper, spatial QC, graph, optimizer, Advanced, and comparative regression tests remain passing.
+- Added synthetic tests for delta direction, regime summaries, paired matching/incomplete-pair rejection, unpaired statistics/effect size/FDR, missing H/V, missing spatial coordinates, no-registration behavior, deterministic output, cache reuse, small-n warnings, mixed-failure retention, exports, and unchanged single-sample results.
+- A public GEO-style flat Visium import and a pairwise comparative workflow were reviewed as functional demonstrations. These examples do not establish biological validity or clinical utility.
+- The public archive is checked for forward-slash paths and excludes H5AD data, raw matrices, local results, caches, logs, wheels, nested archives, and repository metadata.
+
+## v0.4.1-beta Spatial Graph Results patch
+
+Validation date: 2026-07-21
+
+- Added focused tests for figure suffix classification, longest-prefix sample matching, figure priority/fallback, manifest success/failure handling, context-summary edge cases, image fitting/error handling, and hidden-Tk viewer behavior.
+- Preserved the Spatial Graph analysis module version and output schema at `0.4`; the new viewer reads existing output files only.
+- Full regression-test results for this patch are recorded in `V0_4_1_BETA_SPATIAL_GRAPH_VIEWER_REPORT.md`.
+
 ## v0.4-beta stabilization
 
 Validation date: 2026-07-14

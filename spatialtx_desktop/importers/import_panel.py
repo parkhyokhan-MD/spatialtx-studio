@@ -8,6 +8,7 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 from typing import Callable
 
+from .geo_flat_panel import GeoFlatImportPanel
 from .mex_to_h5ad import convert_mex_to_h5ad, detect_mex_sample
 from .validate_h5ad import validate_h5ad
 from .visium_to_h5ad import convert_visium_to_h5ad, detect_visium_sample
@@ -16,7 +17,12 @@ from .visium_to_h5ad import convert_visium_to_h5ad, detect_visium_sample
 class ImportConvertPanel(ttk.Frame):
     """Raw-format conversion boundary for the h5ad-centered Main Mapper."""
 
-    def __init__(self, master, on_use_in_mapper: Callable[[Path], None]) -> None:
+    def __init__(
+        self,
+        master,
+        on_use_in_mapper: Callable[[Path], None],
+        on_comparative_manifest: Callable[[Path], None] | None = None,
+    ) -> None:
         super().__init__(master)
         ttk.Label(self, text="Import / Convert", font=("Segoe UI Semibold", 14)).pack(anchor="w")
         ttk.Label(
@@ -34,8 +40,10 @@ class ImportConvertPanel(ttk.Frame):
         tabs.pack(fill="both", expand=True)
         mex_tab = ttk.Frame(tabs, padding=10)
         visium_tab = ttk.Frame(tabs, padding=10)
+        geo_flat_tab = ttk.Frame(tabs, padding=10)
         tabs.add(mex_tab, text="Raw 10x MEX/MTX → H5AD")
         tabs.add(visium_tab, text="Raw Visium H5 + spatial → H5AD")
+        tabs.add(geo_flat_tab, text="GEO Flat Visium Directory")
         ConverterSection(
             mex_tab,
             title="Raw 10x MEX/MTX → H5AD",
@@ -56,6 +64,11 @@ class ImportConvertPanel(ttk.Frame):
             convert=convert_visium_to_h5ad,
             require_spatial=True,
             on_use_in_mapper=on_use_in_mapper,
+        ).pack(fill="both", expand=True)
+        GeoFlatImportPanel(
+            geo_flat_tab,
+            on_use_in_mapper=on_use_in_mapper,
+            on_comparative_manifest=on_comparative_manifest,
         ).pack(fill="both", expand=True)
 
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import os
 import queue
 import threading
@@ -10,6 +11,7 @@ from tkinter import filedialog, messagebox, ttk
 from . import APP_NAME, AUTHOR, BUILD_DATE, __version__
 from .advanced_analysis_ui import AdvancedAnalysisPanel
 from .advanced_ui import AdvancedToolsPanel
+from .comparative_ui import ComparativeAnalysisPanel
 from .gene_program_validation import validate_gene_programs
 from .importers.import_panel import ImportConvertPanel
 from .workflow import (
@@ -83,9 +85,11 @@ class SpatialTXDesktop(tk.Tk):
         about_tab = ttk.Frame(self.right_tabs, padding=10)
         advanced_tab = ttk.Frame(self.right_tabs, padding=10)
         advanced_analysis_tab = ttk.Frame(self.right_tabs, padding=10)
+        comparative_tab = ttk.Frame(self.right_tabs, padding=10)
         self.right_tabs.add(analysis_tab, text="Main Mapper")
         self.right_tabs.add(import_tab, text="Import / Convert")
         self.right_tabs.add(map_tab, text="Map Viewer")
+        self.right_tabs.add(comparative_tab, text="Comparative Analysis")
         self.right_tabs.add(qubo_tab, text="QUBO Optimizer")
         self.right_tabs.add(theory_tab, text="Theory & Metrics")
         self.right_tabs.add(interpretation_tab, text="Interpretation")
@@ -94,6 +98,7 @@ class SpatialTXDesktop(tk.Tk):
         self.right_tabs.add(about_tab, text="About & Version")
         self.interpretation_tab = interpretation_tab
         self.analysis_tab = analysis_tab
+        self.comparative_tab = comparative_tab
 
         source = ttk.LabelFrame(left, text="1  Input and samples", padding=10)
         source.pack(fill="both", expand=True)
@@ -241,8 +246,18 @@ class SpatialTXDesktop(tk.Tk):
         self.import_convert_panel = ImportConvertPanel(
             import_tab,
             on_use_in_mapper=self._open_converted_folder,
+            on_comparative_manifest=self._open_comparative_manifest,
         )
         self.import_convert_panel.pack(fill="both", expand=True)
+        self.comparative_analysis_panel = ComparativeAnalysisPanel(
+            comparative_tab,
+            get_samples=self._selected,
+            get_genes=self._genes,
+            get_quantiles=self._quantiles,
+            get_scoring_options=self._scoring_options,
+            get_output=lambda: self.output_var.get(),
+        )
+        self.comparative_analysis_panel.pack(fill="both", expand=True)
         self.advanced_analysis_panel = AdvancedAnalysisPanel(
             advanced_analysis_tab,
             get_samples=self._selected,
@@ -368,7 +383,7 @@ class SpatialTXDesktop(tk.Tk):
             ("Creator", AUTHOR),
             ("Version", f"v{__version__}"),
             ("Build date", BUILD_DATE),
-            ("Edition", "v0.4-beta source release candidate based on the public v0.3-beta baseline"),
+            ("Edition", "v0.5-beta public source release"),
         ]
         for row, (label, value) in enumerate(details):
             ttk.Label(card, text=label, font=("Segoe UI Semibold", 9)).grid(row=row, column=0, sticky="nw", pady=4)
@@ -388,9 +403,10 @@ class SpatialTXDesktop(tk.Tk):
                 "inputs as canonical H5AD before Main Mapper analysis. The desktop edition also retains the fixed-cardinality "
                 "QUBO-inspired optimizer.\n\n"
                 "Operational regime labels are exploratory candidates and are not validated biological subtypes."
-                "\n\nv0.4-beta adds an optional Spatial Graph & Neighborhood — Experimental module for sparse graph QC, H_expr/V_expr "
-                "context fields, and exploratory neighborhood association statistics without changing the established C/S "
-                "scoring or Type A/B/C rules."
+                "\n\nv0.5-beta adds Comparative Spatial Transition Analysis for pairwise, paired-group, unpaired-group, "
+                "and manifest-based sample-level comparisons. It does not perform direct spatial registration or "
+                "spot-wise subtraction. H_expr and V_expr remain optional observational context and do not alter "
+                "C/S/R, transition masks, or Type A/B/C candidate labels. Existing single-sample behavior remains unchanged."
             ),
             wraplength=430, justify="left",
         ).pack(anchor="nw", fill="x")
@@ -597,6 +613,29 @@ class SpatialTXDesktop(tk.Tk):
         if children:
             self.sample_tree.selection_set(children)
         self.right_tabs.select(self.analysis_tab)
+
+    def _open_comparative_manifest(self, manifest: Path) -> None:
+        """Load a reviewed manifest without automatically running comparative analysis."""
+        groups: list[str] = []
+        try:
+            with Path(manifest).open("r", encoding="utf-8-sig", newline="") as handle:
+                for row in csv.DictReader(handle):
+                    group = str(row.get("group", "")).strip()
+                    if group and group not in groups:
+                        groups.append(group)
+        except OSError:
+            groups = []
+        self.comparative_analysis_panel.mode_var.set("manifest_batch")
+        self.comparative_analysis_panel.manifest_var.set(str(Path(manifest)))
+        if len(groups) >= 2:
+            reference = "pre" if "pre" in groups else groups[0]
+            target = "post" if "post" in groups and "post" != reference else next(
+                group for group in groups if group != reference
+            )
+            self.comparative_analysis_panel.reference_var.set(reference)
+            self.comparative_analysis_panel.target_var.set(target)
+        self.comparative_analysis_panel._update_mode_state()
+        self.right_tabs.select(self.comparative_tab)
 
     def _scan(self) -> None:
         try:

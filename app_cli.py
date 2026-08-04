@@ -76,6 +76,14 @@ def run_manifest(args: argparse.Namespace) -> list[dict]:
 
 
 def main() -> int:
+    if len(sys.argv) > 1 and sys.argv[1] == "compare":
+        from comparative_cli import main as comparative_main
+
+        return comparative_main(sys.argv[2:])
+    if len(sys.argv) > 1 and sys.argv[1] == "import-geo-flat":
+        from geo_flat_cli import main as geo_flat_main
+
+        return geo_flat_main(sys.argv[2:])
     args = parse_args()
     try:
         if args.manifest:

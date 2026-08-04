@@ -1,12 +1,27 @@
-# SpatialTX Studio Desktop v0.4-beta
+# SpatialTX Studio Desktop v0.5-beta
 
-> Source-based beta release candidate. Exploratory research use only.
+> Public source beta. Exploratory research use only.
 
 SpatialTX Studio Desktop is an open-source research workspace for exploratory spatial transcriptomics analysis. It provides a local Python desktop application and command-line workflow for `.h5ad` inputs.
 
 This software is a research prototype. It is not intended for diagnosis, treatment selection, or clinical decision-making. Outputs are exploratory and require independent review and validation.
 
-## v0.4-beta scope
+## What is new in v0.5-beta
+
+v0.5-beta adds **Comparative Spatial Transition Analysis** without changing the established single-sample Main Mapper. It compares sample-level summaries for pairwise, paired-group, unpaired-group, and CSV-manifest designs. AnnData `.h5ad` remains the canonical analysis input.
+
+- Delta direction is always `Target - Reference`; positive values mean Target is higher.
+- Default group inference uses Wilcoxon signed-rank for paired data and Mann-Whitney U for unpaired data, with effect sizes, seeded bootstrap confidence intervals, and Benjamini-Hochberg FDR.
+- Operational Type A/B/C candidate changes are descriptive, confidence-flagged summaries, not validated biological state transitions.
+- Comparative maps are side-by-side displays only. No direct spatial registration or spot-wise subtraction is performed.
+- Optional `H_expr` and `V_expr` are observational context only and never alter `C(x)`, `S(x)`, `R(x)`, transition masks, or candidate regime labels.
+- Comparative figures are separated by metric category. Existing raw topology counts are preserved alongside sample-scale context, normalized component densities, stable relative-change views, and explicit scale warnings.
+- Centered H/V sample means are retained only for compatibility and excluded from primary interpretation; available non-centered H/V summaries use a pooled reference/target threshold and remain observational only.
+- Timestamped CSV, JSON, HTML, PDF, logs, fresh figures, input hashes, warnings, failures, and environment metadata are exported.
+
+This release does not add candidate discovery, ligand-receptor analysis, comparative QUBO, AI interpretation, literature search, or multi-axis modeling. See [Comparative Analysis documentation](docs/COMPARATIVE_ANALYSIS.md).
+
+## Preserved v0.4.1 capabilities
 
 - Local Python desktop application and CLI
 - Single-sample and manifest-based batch processing
@@ -17,8 +32,9 @@ This software is a research prototype. It is not intended for diagnosis, treatme
 - Opt-in advanced hypothesis-generation utilities
 - A separate **Advanced Analysis** workspace for gene composition, interface enrichment, and local Cx/Sx spatial interaction
 - Reproducible CSV tables, 300-dpi PNG figures, vector PDFs, and JSON analysis metadata
-- A dedicated **Import / Convert** workspace for Raw 10x MEX/MTX and Raw Visium H5 + spatial conversion to canonical H5AD
+- A dedicated **Import / Convert** workspace for Raw 10x MEX/MTX, Raw Visium H5 + spatial, and prefix-grouped GEO flat Visium conversion to canonical H5AD
 - An optional **Spatial Graph & Neighborhood — Experimental** workflow for sparse graph QC, context fields, and exploratory neighborhood statistics
+- An in-app **Spatial Graph Results** viewer for generated graph/context figures, H_expr/V_expr context QC, failed-sample summaries, and direct result-file access
 - Optional multi-seed QUBO stability analysis with selection frequency, consensus core genes, exact-k consensus, objective stability, R-field agreement, and pairwise overlap exports
 
 The established Cx and Sx definitions, Main Mapper scoring workflow, default thresholds, Type A/B/C rules, and existing output contracts are unchanged. The FRAME2.6 CLI now delegates to that same canonical Main Mapper engine instead of maintaining an independent calculation.
@@ -58,32 +74,37 @@ python desktop_app.py
 
 See [README_DESKTOP.md](README_DESKTOP.md) for the desktop workflow and [README_local_run.md](README_local_run.md) for local CLI examples.
 
-## Screenshot
+## Comparative Analysis quick start
 
-![SpatialTX Studio Desktop v0.4-beta](docs/screenshots/spatialtx_studio_desktop_v0_4_beta.png)
+Select two analyzed H5AD samples in Main Mapper, then open **Comparative Analysis** for a pairwise run. For group designs, load a manifest containing `sample_id`, `file_path`, and `group`; paired designs also require `pair_id`.
 
-SpatialTX Studio displays C-side and S-side expression fields, the C−S balance field, local gradients, localized interface-like candidates, and diffuse-transition patterns.
+Review the sample-scale banner and normalized topology figures before interpreting raw component-count changes. Pairwise regime results use a descriptive transition card; paired cohorts retain a count-and-row-percentage transition matrix. All deltas remain `Target - Reference`, and the original raw metric values remain exported.
 
-### Example output: H/V expression context
-
-![PDAC_P4 H/V expression-context joint state](docs/screenshots/pdac_p4_h_v_expression_context_joint_state.png)
-
-Example output from the optional **Spatial Graph & Neighborhood — Experimental** workflow.
-
-- `H_expr`: hypoxia-associated expression field
-- `V_expr`: endothelial/angiogenic expression proxy
-- Joint-state colors indicate whether each spot exceeds the selected H/V context thresholds.
-
-These expression-context states are exploratory. They do not constitute validated measurements of tissue hypoxia, vessel density, perfusion, vascularity, or functional blood supply.
-
-Generated figures are saved under:
-
-```text
-<selected output folder>/
-└─ spatial_graph_neighborhood_<timestamp>/
-   └─ figures/
-      └─ <sample>_H_V_association_map.png
+```bash
+spatialtx compare --sample-a sample_A.h5ad --sample-b sample_B.h5ad --outdir results_pairwise --seed 42
 ```
+
+```bash
+spatialtx compare --manifest examples/comparative_manifest_example.csv --mode paired --reference pre --target post --outdir results_v05 --seed 42
+```
+
+Required output files include sample metrics, delta metrics, group statistics, operational regime transitions, warnings, run manifest, parameter JSON, HTML/PDF reports, figures, and logs. Statistical significance alone is not evidence of biological or clinical significance.
+
+## v0.5-beta screenshots
+
+The screenshots were captured during final v0.5 development testing; the published source identifies itself as v0.5-beta.
+
+Comparative Analysis workspace with category-specific metric changes:
+
+![SpatialTX Studio v0.5-beta Comparative Analysis metric changes](docs/screenshots/spatialtx_studio_v0_5_beta_comparative_metric_changes.png)
+
+Side-by-side `R(x) = C(x) - S(x)` maps. These panels are descriptive displays; no registration or spot-wise subtraction is performed:
+
+![SpatialTX Studio v0.5-beta side-by-side R maps](docs/screenshots/spatialtx_studio_v0_5_beta_comparative_side_by_side_r_maps.png)
+
+GEO Flat Visium Directory inventory and conversion workflow:
+
+![SpatialTX Studio v0.5-beta GEO Flat Visium Directory](docs/screenshots/spatialtx_studio_v0_5_beta_geo_flat_visium_directory.png)
 
 ## Import / Convert
 
@@ -91,14 +112,19 @@ The Main Mapper remains H5AD-centered. Raw data must first be converted in **Imp
 
 - **Raw 10x MEX/MTX → H5AD**: `matrix.mtx`, `barcodes.tsv`, and `features.tsv`/`genes.tsv`, including supported `.gz` variants.
 - **Raw Visium H5 + spatial → H5AD**: `filtered_feature_bc_matrix.h5`, tissue positions, scalefactors, and optional tissue images, including supported `.gz` spatial files and GEO-style filename prefixes.
+- **GEO Flat Visium Directory**: scans any user-selected readable directory, groups standard MEX/spatial files by their exact full filename prefix, validates every detected sample, and converts only explicitly selected valid samples.
 
-Each section provides input/output selection, sample naming, conversion, H5AD validation, output-folder access, a status log, and Main Mapper handoff. Seurat RDS, h5Seurat, parquet, and generic CSV import are not supported.
+The flat-directory importer never groups by accession alone, does not merge similar prefixes such as `sample_3` and `sample_30`, does not auto-pair pre/post names, and writes nothing into the source directory. Filename-derived subject/condition metadata remains unconfirmed until the user reviews and confirms a draft comparative manifest. See [GEO Flat Visium Import](docs/GEO_FLAT_VISIUM_IMPORT.md).
+
+Each section provides runtime input/output selection, conversion and validation feedback, output-folder access, and Main Mapper handoff. Seurat RDS, h5Seurat, parquet, and generic CSV import are not supported.
 
 ## Advanced Analysis quick start
 
 In the desktop application, scan and select one or more `.h5ad` files, then open **Advanced Analysis**. The established composition, enrichment, and interaction tabs use the Cx/Sx genes and quantiles currently displayed in the main workspace.
 
-v0.4-beta also adds **Spatial Graph & Neighborhood — Experimental** as a separate opt-in tab. It builds sparse radius, Visium-lattice, or symmetric-KNN graphs; distinguishes native-coordinate from calibrated physical radius; reports input/graph/context QC; optionally calculates `H_expr` and `V_expr` context fields; and exports separate same-spot, neighboring-spot, and continuous edge association statistics. These context fields do not modify `R(x)`, Type A/B/C labels, or transition masks.
+The v0.4 line adds **Spatial Graph & Neighborhood — Experimental** as a separate opt-in tab. It builds sparse radius, Visium-lattice, or symmetric-KNN graphs; distinguishes native-coordinate from calibrated physical radius; reports input/graph/context QC; optionally calculates `H_expr` and `V_expr` context fields; and exports separate same-spot, neighboring-spot, and continuous edge association statistics. These context fields do not modify `R(x)`, Type A/B/C labels, or transition masks.
+
+v0.4.1-beta adds an in-app Spatial Graph Results viewer. After Spatial Graph & Neighborhood analysis completes, generated Graph QC, H_expr, V_expr, H/V joint-state, and neighborhood enrichment figures can be reviewed directly inside the desktop application. The viewer is a read-only UI over the existing generated files: PNG, CSV, and JSON outputs remain in the timestamped output folder, and the output schema remains v0.4. H_expr and V_expr remain descriptive context fields and do not change Main Mapper `R(x)`, Type A/B/C calls, or transition masks.
 
 The Advanced Analysis command-line entry point remains separate from the core CLI:
 
@@ -109,7 +135,7 @@ python advanced_cli.py --module interaction --input sample.h5ad --output results
 python advanced_cli.py --module spatial_graph --input sample.h5ad --output results --graph-method radius --permutations 999 --seed 20260713
 ```
 
-See [RELEASE_NOTES_v0_4_beta.md](RELEASE_NOTES_v0_4_beta.md) for beta stabilization notes. The previous public source release notes remain in [RELEASE_NOTES_v0_3_beta.md](RELEASE_NOTES_v0_3_beta.md).
+See [RELEASE_NOTES_v0_5_beta.md](RELEASE_NOTES_v0_5_beta.md) for this release and [RELEASE_NOTES_v0_4_beta.md](RELEASE_NOTES_v0_4_beta.md) for the v0.4 beta stabilization history. Earlier public source release notes remain available in the repository.
 
 ## CLI quick start
 
@@ -135,7 +161,7 @@ For C/S exclusivity, the optimizer implements the constraint `x_C,g + x_S,g <= 1
 
 ## Research-use guardrails
 
-A3-A5 are optional hypothesis-generation utilities. They do not discover or validate drug responses, receptor function, membrane localization, ligand-receptor binding, biomarkers, biological subtypes, or clinical effects. See [DISCLAIMER.md](DISCLAIMER.md) and [RELEASE_NOTES_v0_4_beta.md](RELEASE_NOTES_v0_4_beta.md).
+A3-A5 are optional hypothesis-generation utilities. A3 is a non-spatial Reference/Target expression and detection-fraction contrast; use Comparative Analysis for C/S/R spatial sample or group comparisons. The earlier filename-based A1 pre/post pair scanner is no longer displayed in Advanced / Experimental. These utilities do not discover or validate drug responses, receptor function, membrane localization, ligand-receptor binding, biomarkers, biological subtypes, or clinical effects. See [DISCLAIMER.md](DISCLAIMER.md) and [RELEASE_NOTES_v0_5_beta.md](RELEASE_NOTES_v0_5_beta.md).
 
 ## Spatial Graph and Neighborhood Analysis
 

@@ -1,0 +1,5 @@
+sample_id,file_path,group,pair_id,condition,batch,notes
+patient01_pre,data/patient01_pre.h5ad,pre,patient01,pre,batch1,matched example
+patient01_post,data/patient01_post.h5ad,post,patient01,post,batch1,matched example
+patient02_pre,data/patient02_pre.h5ad,pre,patient02,pre,batch1,matched example
+patient02_post,data/patient02_post.h5ad,post,patient02,post,batch1,matched example

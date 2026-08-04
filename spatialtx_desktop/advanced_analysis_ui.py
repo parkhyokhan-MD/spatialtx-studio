@@ -15,6 +15,7 @@ import pandas as pd
 
 from .advanced_analysis import MODULE_LABELS, run_advanced_batch
 from .graph.context import DEFAULT_HYPOXIA_GENES, DEFAULT_VASCULAR_PROXY_GENES
+from .spatial_graph_results_ui import SpatialGraphResultsPanel
 from .workflow import parse_gene_text
 
 
@@ -119,17 +120,22 @@ class AdvancedAnalysisPanel(ttk.Frame):
         enrichment = ttk.Frame(self.tabs, padding=12)
         interaction = ttk.Frame(self.tabs, padding=12)
         spatial_graph = ttk.Frame(self.tabs, padding=12)
+        spatial_graph_results = ttk.Frame(self.tabs, padding=10)
         dashboard = ttk.Frame(self.tabs, padding=10)
+        self.spatial_graph_results_tab = spatial_graph_results
         self.dashboard_tab = dashboard
         self.tabs.add(composition, text="Gene Composition")
         self.tabs.add(enrichment, text="Interface Enrichment")
         self.tabs.add(interaction, text="Cx/Sx Interaction")
         self.tabs.add(spatial_graph, text="Spatial Graph & Neighborhood — Experimental")
+        self.tabs.add(spatial_graph_results, text="Spatial Graph Results")
         self.tabs.add(dashboard, text="Results Dashboard")
         self._build_composition(composition)
         self._build_enrichment(enrichment)
         self._build_interaction(interaction)
         self._build_spatial_graph(spatial_graph)
+        self.spatial_graph_results_panel = SpatialGraphResultsPanel(spatial_graph_results, self._open_path)
+        self.spatial_graph_results_panel.pack(fill="both", expand=True)
         self._build_dashboard(dashboard)
 
         footer = ttk.Frame(self)
@@ -652,6 +658,8 @@ class AdvancedAnalysisPanel(ttk.Frame):
     def _set_enabled(self, enabled: bool) -> None:
         for child in self.winfo_children():
             self._set_widget_enabled(child, enabled)
+        if enabled and hasattr(self, "spatial_graph_results_panel"):
+            self.spatial_graph_results_panel.refresh_control_states()
 
     def _set_widget_enabled(self, widget, enabled: bool) -> None:
         if isinstance(widget, (ttk.Button, ttk.Entry, ttk.Spinbox, ttk.Combobox, ttk.Checkbutton, ttk.Notebook)):
@@ -790,9 +798,11 @@ class AdvancedAnalysisPanel(ttk.Frame):
                     self.graph_cancel_event = None
                     self.last_run = run_dir
                     self.open_button.configure(state="normal")
-                    ok = int((manifest["status"] == "ok").sum()) if "status" in manifest else 0
-                    total = len(manifest)
-                    self.status.configure(text=f"Spatial Graph & Neighborhood complete: {ok}/{total} sample(s).")
+                    viewer_status = self.spatial_graph_results_panel.load_run(run_dir, manifest)
+                    ok = len(self.spatial_graph_results_panel.manifest_summary.successful_samples)
+                    total = self.spatial_graph_results_panel.manifest_summary.total_rows
+                    self.tabs.select(self.spatial_graph_results_tab)
+                    self.status.configure(text=viewer_status)
                     self._append_graph_preview(f"Output folder: {run_dir}")
                     self._append_graph_preview(manifest.to_string(index=False))
                     if ok != total:

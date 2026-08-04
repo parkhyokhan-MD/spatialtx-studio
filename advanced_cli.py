@@ -5,11 +5,12 @@ import sys
 from pathlib import Path
 
 from spatialtx_desktop.advanced_analysis import MODULE_LABELS, run_advanced_batch
+from spatialtx_desktop import __version__
 from spatialtx_desktop.workflow import DEFAULT_C_GENES, DEFAULT_S_GENES, parse_gene_text
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="SpatialTX Studio Desktop v0.4-beta Advanced Analysis CLI")
+    parser = argparse.ArgumentParser(description=f"SpatialTX Studio Desktop v{__version__} Advanced Analysis CLI")
     parser.add_argument("--module", required=True, choices=sorted([*MODULE_LABELS, "spatial_graph"]))
     parser.add_argument("--input", required=True, nargs="+", help="One or more local .h5ad files")
     parser.add_argument("--output", required=True, help="Output root")

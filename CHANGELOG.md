@@ -2,6 +2,43 @@
 
 All notable public and development changes to SpatialTX Studio Desktop are recorded here.
 
+## v0.5-beta
+
+- Improved pairwise Comparative Analysis sample selection for long directories: filename-first Sample A/B labels, duplicate-name disambiguation, and separate read-only full-path fields now keep the selected H5AD files identifiable in narrow windows.
+- Removed the filename-based A1 pre/post pair scanner from the Advanced / Experimental UI while retaining its backend for compatibility; renamed A3 as a non-spatial Reference/Target expression candidate contrast and added direct H5AD browse controls.
+- Redesigned Comparative Analysis visualization around a centralized ordered metric registry and category-specific figures so incompatible raw counts, fractions, scores, and ratios no longer share one primary axis.
+- Added sample-scale exports and warnings for valid/in-tissue spots, tissue area proxy, tissue graph components, coordinate extent, and nearest-spot spacing.
+- Preserved raw topology counts and added per-spot, per-in-tissue-spot, per-tissue-component, transition-spot, and normalized fragmentation metrics.
+- Added ordinary and symmetric percent changes with zero/near-zero reference protection; group-only standardized deltas use pooled sample scale, while pairwise z-scores are not invented.
+- Replaced the sparse pairwise 3 by 3 regime heatmap with a descriptive transition card; paired mode retains the count and row-percentage matrix.
+- Added explicit R-map fill/outline legends, a category-grouped standardized heatmap, sample-scale figure, relative-change figure, and compact exploratory summary card.
+- Deprecated centered H/V sample means for comparative interpretation while retaining them for compatibility; added pooled-threshold non-centered distribution, transition-enrichment, and variability summaries when supported by the input expression scale.
+- Added six new comparative CSV exports while preserving previous filenames and raw values.
+
+- Added a path-agnostic **GEO Flat Visium Directory** importer mode alongside the two existing standard-folder modes.
+- Added exact full-prefix grouping, deterministic inventory, strict duplicate/dimension/orientation/position/scalefactor validation, gzip support, arbitrary input/output paths, read-only source handling, privacy-conscious H5AD provenance, portable output-relative image references, and collision-safe batch conversion.
+- Added editable, explicitly confirmed comparative-manifest handoff; unconfirmed filename inference never creates active pair/group assignments.
+- Added `spatialtx import-geo-flat` and `spatialtx-import-geo-flat` CLI entry points plus inventory, validation, log, and conversion-summary reports.
+- Added a separate Comparative Analysis workspace for pairwise, paired-group, unpaired-group, and manifest-based comparisons.
+- Reused the canonical single-sample C/S scoring engine and sample-level metrics without changing Main Mapper behavior.
+- Added clearly directed `Target - Reference` deltas, robust group summaries, effect sizes, seeded bootstrap confidence intervals, Wilcoxon/Mann-Whitney defaults, optional explicit t tests, and Benjamini-Hochberg FDR.
+- Added descriptive, confidence-flagged Type A/B/C candidate regime transition/distribution summaries.
+- Added fresh comparative figures, cautious rules-based summaries, HTML/PDF reports, CSV/JSON exports, input hashes, software-environment metadata, warnings, and failed-sample manifests.
+- Added memory preflight, content-addressed sample-summary caching, large-batch warnings, responsive GUI execution, and safe partial export on cancellation.
+- Kept H_expr and V_expr optional and observational only; they do not modify C/S/R, masks, transition burden, or regime labels.
+- No spatial registration or spot-wise subtraction is performed.
+- Candidate discovery, ligand-receptor analysis, comparative QUBO, AI interpretation, literature search, and multi-axis modeling were not added.
+- Outputs remain exploratory and are not intended for diagnosis, treatment selection, or clinical decision-making.
+
+## v0.4.1-beta
+
+- Added a read-only in-app Spatial Graph Results viewer for existing generated PNG figures.
+- Added automatic post-run navigation, sample/figure selection, previous/next navigation, and fit-to-window image display.
+- Added H_expr/V_expr context QC summaries, failed/cancelled sample summaries, and direct access to existing result tables.
+- Updated the application version from v0.4-beta to v0.4.1-beta.
+- Preserved Main Mapper scoring, C/S/R/G definitions, Type A/B/C rules, H_expr/V_expr calculations, graph construction, permutation statistics, output schema v0.4, existing filenames, and CLI behavior.
+- Outputs remain exploratory and are not intended for diagnosis, treatment selection, or clinical decision-making.
+
 ## v0.4-beta
 
 - Enforced mutually exclusive C-side and S-side gene programs across Main Mapper, CLI, Advanced Analysis, Spatial Graph, adaptive selection, and QUBO follow-up analysis.

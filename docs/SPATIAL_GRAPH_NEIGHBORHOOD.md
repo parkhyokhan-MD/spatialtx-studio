@@ -1,6 +1,6 @@
 # Spatial Graph & Neighborhood — Experimental
 
-SpatialTX Studio v0.4-beta includes an optional graph-based analysis module for spatial neighborhood statistics and descriptive context fields. The module is separate from the Main Mapper and remains Experimental.
+SpatialTX Studio v0.4.1-beta includes an optional graph-based analysis module for spatial neighborhood statistics and descriptive context fields. The module is separate from the Main Mapper and remains Experimental. Its application patch viewer reads the unchanged v0.4 output schema.
 
 These analyses provide exploratory spatial association and organization summaries. They do not establish causal, physical, or biological cell-cell interactions.
 

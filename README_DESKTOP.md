@@ -1,29 +1,31 @@
-# SpatialTX Studio Desktop v0.4-beta
+# SpatialTX Studio Desktop v0.5-beta
 
-> Source-based beta release candidate. Exploratory research use only.
+> Public source beta. Exploratory research use only.
 
-v0.4-beta continues from the public v0.3-beta baseline and preserves the **Import / Convert** architecture plus lightweight robustness/memory-safety diagnostics. Advanced Analysis includes Gene Composition, Interface Enrichment, and Cx/Sx Interaction modules that write only to separate timestamped `advanced_*` folders.
+v0.5-beta preserves the public v0.4-beta analysis behavior while adding a separate **Comparative Analysis** workflow. Import / Convert, Main Mapper, Advanced Analysis, graph tools, viewer, and existing output contracts remain available.
 
-v0.4-beta adds an optional **Spatial Graph & Neighborhood — Experimental** module under Advanced Analysis. This module builds sparse spatial graphs, reports graph QC, calculates optional `H_expr` and `V_expr` context fields, and runs exploratory neighborhood statistics without changing Main Mapper C/S scoring or Type A/B/C behavior.
+The v0.4 line adds an optional **Spatial Graph & Neighborhood — Experimental** module under Advanced Analysis. This module builds sparse spatial graphs, reports graph QC, calculates optional `H_expr` and `V_expr` context fields, and runs exploratory neighborhood statistics without changing Main Mapper C/S scoring or Type A/B/C behavior. v0.4.1-beta adds a read-only in-app viewer for its generated figures, context QC, and result files.
 
 Windows desktop research prototype for the main `.h5ad` SpatialTX workflow.
 
 - Creator: **Hyokhan Park, MD**
-- Version: **v0.4-beta**
-- Development start: **2026-07-13**
-- Edition: **Source-based beta release candidate**
+- Version: **v0.5-beta**
+- Release date: **2026-08-04**
+- Edition: **Public source beta**
 
-Main Mapper:
+The screenshots below were captured during final v0.5 development testing; the published source identifies itself as v0.5-beta.
 
-![SpatialTX Studio Desktop v0.4-beta Main Mapper](docs/screenshots/spatialtx_studio_desktop_v0_4_beta_main_mapper.png)
+Comparative Analysis metric changes:
 
-Import / Convert:
+![SpatialTX Studio v0.5-beta Comparative Analysis metric changes](docs/screenshots/spatialtx_studio_v0_5_beta_comparative_metric_changes.png)
 
-![SpatialTX Studio Desktop v0.4-beta Import and Convert](docs/screenshots/spatialtx_studio_desktop_v0_4_beta_import_convert.png)
+Side-by-side `R(x) = C(x) - S(x)` maps; no registration or spot-wise subtraction is performed:
 
-Advanced Analysis → Spatial Graph & Neighborhood — Experimental:
+![SpatialTX Studio v0.5-beta side-by-side R maps](docs/screenshots/spatialtx_studio_v0_5_beta_comparative_side_by_side_r_maps.png)
 
-![SpatialTX Studio Desktop v0.4-beta Spatial Graph Experimental](docs/screenshots/spatialtx_studio_desktop_v0_4_beta.png)
+GEO Flat Visium Directory:
+
+![SpatialTX Studio v0.5-beta GEO Flat Visium Directory](docs/screenshots/spatialtx_studio_v0_5_beta_geo_flat_visium_directory.png)
 
 ## Start on Windows
 
@@ -64,9 +66,19 @@ Select a 10x/Visium sample folder containing:
 
 Standard Space Ranger names and GEO-style prefixed names ending in these Visium filenames are accepted, for example `GSM9532669_SAMPLE_filtered_feature_bc_matrix.h5` and `GSM9532669_SAMPLE_tissue_positions.csv.gz`. Hires and lowres tissue PNG files are optional; uncompressed `.png` and `.png.gz` are supported.
 
-### Shared conversion controls
+### GEO Flat Visium Directory
 
-Both importer sections provide **Select input folder**, **Select output folder**, **Sample name**, **Convert to H5AD**, **Validate converted H5AD**, **Open output folder**, **Use in Main Mapper**, and a status log. Successful conversion writes `<output_dir>/<sample_name>.h5ad`.
+Choose any readable local or mounted directory containing multiple flattened standard Visium samples whose files share exact prefixes, such as `GSM9452684_sample_30_pre_matrix.mtx` and `GSM9452684_sample_30_pre_tissue_positions.csv`. Recursive scanning is off by default. SpatialTX groups only files with the same complete prefix, shows valid/warning/invalid status, and converts only rows selected by the user.
+
+The source directory is treated as read-only. Canonical mapping uses temporary storage outside the source; converted H5AD, image assets, inventory, validation report, JSON log, and conversion summary are written to the user-selected output folder. Existing H5AD files are never overwritten silently.
+
+An optional comparative-manifest editor displays provisional accession, subject, and condition parsing. Pair ID, group, condition, batch, and notes remain editable. An unconfirmed draft leaves `group` and `pair_id` blank and records `pairing_source=filename_inference_unconfirmed`; only explicit user confirmation writes `pairing_source=user_confirmed` and enables direct handoff to Comparative Analysis. No analysis starts automatically.
+
+See [docs/GEO_FLAT_VISIUM_IMPORT.md](docs/GEO_FLAT_VISIUM_IMPORT.md) for suffixes, validation rules, CLI examples, source-file safety, and limitations.
+
+### Standard-folder shared conversion controls
+
+The two standard-folder importer sections provide **Select input folder**, **Select output folder**, **Sample name**, **Convert to H5AD**, **Validate converted H5AD**, **Open output folder**, **Use in Main Mapper**, and a status log. The GEO flat section adds inventory scanning and multi-sample selection.
 
 Seurat RDS, h5Seurat, parquet, and generic CSV import are not supported.
 
@@ -82,17 +94,34 @@ Seurat RDS, h5Seurat, parquet, and generic CSV import are not supported.
 
 C-side and S-side programs must be mutually exclusive. Input is normalized by trimming whitespace, converting symbols to uppercase, removing within-program duplicates, and preserving first occurrence order. If the same gene appears on both sides, Main Mapper, Advanced Analysis, Spatial Graph, CLI, and QUBO follow-up execution are blocked until the user removes it from one side. This is required because a shared signal may cancel in `R=C-S`.
 
-The application includes nine working tabs and is designed around a Full HD desktop:
+The application includes ten working tabs and is designed around a Full HD desktop:
 
 - **Main Mapper** — H5AD inputs, C/S programs, thresholds, scoring execution, logs, and export
-- **Import / Convert** — converts Raw 10x MEX/MTX or Raw Visium H5 + spatial inputs to canonical H5AD before analysis
+- **Import / Convert** — converts Raw 10x MEX/MTX, Raw Visium H5 + spatial, or prefix-grouped GEO flat Visium inputs to canonical H5AD before analysis
 - **Map Viewer** — displays generated PNG maps inside the application with sample navigation and fit-to-window scaling
+- **Comparative Analysis** — pairwise, paired-group, unpaired-group, and manifest-based sample-level comparisons using the canonical Main Mapper engine
 - **QUBO Optimizer** — reproducible single-seed selection plus optional multi-seed stability analysis, independent C/S application, restoration of the original fixed gene sets, and explicit recompute/map redraw
 - **Theory & Metrics** — the C/S/R/G model, interface rules, regimes, metric interpretation, optimizer rationale, and the assumptions and limitations of Advanced Analysis
 - **Interpretation** — a sample summary table, automatically generated result explanation, gene-coverage warning, review checklist, and direct access to each PNG map
 - **Advanced Analysis** — gene composition, interface enrichment, local Cx/Sx spatial interaction, Spatial Graph & Neighborhood, and a results dashboard
-- **Advanced / Experimental** — opt-in hypothesis-generation comparisons, heuristic candidate filtering, and local ligand/receptor utility exports
+- **Advanced / Experimental** — opt-in non-spatial expression candidate contrast, heuristic candidate filtering, and local ligand/receptor utility exports
 - **About & Version** — creator, current version/date, release description, and research-use notice
+
+## Comparative Spatial Transition Analysis
+
+The Comparative Analysis tab reuses the current C/S genes, thresholds, normalization, smoothing, and robustness settings. Choose a pair of selected Main Mapper H5AD files, or load a CSV manifest for paired, unpaired, or manifest-batch analysis. The UI validates inputs in a background thread, displays invalid samples, supports safe cancellation between sample computations, and opens timestamped results without blocking the desktop interface.
+
+The default comparison unit is the sample-level summary. Delta is defined as `Target - Reference`. Spatial maps are displayed side by side with a shared `R(x)` color scale, but coordinates are not assumed to correspond and spots are never subtracted directly. The report always states: “Sample-level comparative summary; no direct spatial registration performed.”
+
+Comparative figures are now grouped by compatible metric category: program scores, transition, graph, raw topology, normalized topology, sample scale, relative change, standardized heatmap, regime, R maps, and H/V observation context. The Metric changes table retains reference and target values and raw deltas while adding normalized counterparts, symmetric percent change, scale-sensitivity flags, and warnings. Raw topology counts are never removed, but they should be interpreted only after checking valid spot count, tissue extent, tissue graph-component count, and normalized component density.
+
+Group reports include sample count, mean, median, standard deviation, interquartile range, effect size, seeded bootstrap 95% confidence interval, test result, and Benjamini-Hochberg-adjusted p-value where calculable. Wilcoxon signed-rank is the default for matched pairs; Mann-Whitney U is the default for unpaired groups. Optional paired or Welch t tests must be selected explicitly. Small groups are warned, and statistical significance is not interpreted as biological significance.
+
+`H_expr` and `V_expr` remain optional observational expression context. Missing genes produce warnings rather than a failed core comparison. H/V never redefine `R(x)`, transition masks, transition burden, or Type A/B/C candidate regimes.
+
+Within-sample centered H/V means are expected to approach zero and are omitted from primary comparative figures. When non-centered expression scores are available, the desktop shows medians, 90th percentiles, pooled reference/target high-score fractions, transition enrichment, and variability. These summaries remain observational only.
+
+See [docs/COMPARATIVE_ANALYSIS.md](docs/COMPARATIVE_ANALYSIS.md) and [examples/comparative_manifest_example.csv](examples/comparative_manifest_example.csv) for inputs, commands, output definitions, limitations, and troubleshooting.
 
 ### QUBO option guide
 
@@ -166,6 +195,20 @@ Permutation P-values are exploratory and rely on exchangeability assumptions. Th
 
 Detailed notes are in [docs/SPATIAL_GRAPH_NEIGHBORHOOD.md](docs/SPATIAL_GRAPH_NEIGHBORHOOD.md), [docs/INPUT_AUDIT_AND_VARIABLE_SEMANTICS.md](docs/INPUT_AUDIT_AND_VARIABLE_SEMANTICS.md), and [docs/OUTPUT_SCHEMA_v0_4.md](docs/OUTPUT_SCHEMA_v0_4.md).
 
+## Spatial Graph Results workflow
+
+1. Select one or more H5AD samples.
+2. Open **Advanced Analysis**.
+3. Open **Spatial Graph & Neighborhood — Experimental**.
+4. Configure graph and optional H_expr/V_expr settings.
+5. Run **Spatial Graph & Neighborhood**.
+6. After completion, the app automatically opens **Spatial Graph Results**.
+7. Select a sample and figure.
+8. Review H_expr/V_expr context QC.
+9. Use **Open image** or **Open results folder** when needed.
+
+The first successful sample and its highest-priority available figure are selected automatically. The H/V joint high-state map is preferred; when it is absent, the viewer falls back to H_expr, V_expr, neighborhood enrichment, graph QC, smoothed/unsmoothed context maps, and then other PNGs. Samples that failed or were cancelled appear in a separate area without blocking successful samples. Existing PNG, CSV, and JSON files remain in the timestamped output folder. The viewer reads those files without changing the v0.4 output schema or analysis calculations.
+
 ## Output layout
 
 Each run creates a timestamped folder under the chosen output root:
@@ -191,7 +234,7 @@ The v0.4 graph module writes separate timestamped `spatial_graph_neighborhood_*`
 
 Advanced tools are disabled by default and require an explicit enable checkbox. They include:
 
-- pre/post h5ad pair scanning and expression candidate comparison
+- non-spatial two-H5AD expression candidate contrast
 - receptor-like/membrane filtering and QUBO candidate-pool handoff
 - sequence-annotation templates and ligand/receptor candidate skeletons
 - FASTA/template export when sequence data are supplied
@@ -199,13 +242,15 @@ Advanced tools are disabled by default and require an explicit enable checkbox. 
 
 Raw data conversion is intentionally not part of Advanced tools; it has moved to **Import / Convert**.
 
+The earlier filename-based A1 pre/post pair scanner is no longer displayed in Advanced / Experimental. Use **Comparative Analysis** for reviewed Sample A/Sample B, paired-group, unpaired-group, or manifest-based spatial comparisons.
+
 ### A3-A5 hypothesis-generation flow
 
-- **A3 — Pre/Post candidate comparison:** performs exploratory condition-associated comparison using normalized mean-expression contrast and detection-fraction change. Suitable comparisons include pre/post treatment, control/treated, sample A/B, or region A/B.
+- **A3 — Exploratory expression candidate contrast (non-spatial):** ranks shared genes between a user-selected Reference and Target H5AD using normalized mean-expression contrast and detection-fraction change. It does not compare C/S/R fields, transition metrics, topology, or registered spots.
 - **A4 — Receptor-like/membrane filter:** applies lightweight gene-symbol heuristics to prioritize receptor-like, membrane-associated, transporter-like, and surface-like candidates for follow-up review.
 - **A5 — Export candidate pool to QUBO:** preserves candidate metadata, writes a bounded QUBO input table, and loads its gene list into downstream C-side or S-side combination selection.
 
-A3-A5 are optional advanced hypothesis-generation utilities. They do not validate drug response, receptor function, ligand-receptor binding, read-level evidence, or clinical biomarkers. A3 candidates should be described as condition-associated or exploratory candidates. A4 results should be described as receptor-like or membrane-associated candidates, not discovered or validated receptors.
+A3-A5 are optional advanced hypothesis-generation utilities. They do not validate drug response, receptor function, ligand-receptor binding, read-level evidence, or clinical biomarkers. A3 candidates should be described as condition-associated or exploratory candidates, and its output must not be presented as a spatial comparative result. A4 results should be described as receptor-like or membrane-associated candidates, not discovered or validated receptors.
 
 The ligand/receptor and sequence utilities are local template/skeleton generators. They do not query or validate against external biological databases.
 

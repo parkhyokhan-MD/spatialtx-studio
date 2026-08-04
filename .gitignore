@@ -1,0 +1,39 @@
+# Python and test caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Environments and packaging artifacts
+.venv/
+venv/
+build/
+dist/
+*.egg-info/
+*.whl
+*.zip
+
+# Local analysis and conversion outputs
+advanced_results/
+desktop_results/
+results/
+geo_flat_import_logs/
+.spatialtx_comparative_cache/
+*.log
+
+# Local research data
+*.h5ad
+*.h5
+*.h5seurat
+*.rds
+*.parquet
+*.mtx
+*.mtx.gz
+*.png.gz
+
+# Local environment and editor artifacts
+.env
+.Rhistory
+.DS_Store
+Thumbs.db
