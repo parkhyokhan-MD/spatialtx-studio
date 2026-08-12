@@ -94,7 +94,7 @@ class GraphStabilizationTests(unittest.TestCase):
         irregular.obsm["spatial"] = np.random.default_rng(9).uniform(0, 100, size=(irregular.n_obs, 2))
         irregular.obs = irregular.obs.drop(columns=["array_row", "array_col"])
         duplicate = _regular_adata(8, 8)
-        duplicate_coords = np.asarray(duplicate.obsm["spatial"], dtype=float)
+        duplicate_coords = np.asarray(duplicate.obsm["spatial"], dtype=float).copy()
         duplicate_coords[1] = duplicate_coords[0]
         duplicate.obsm["spatial"] = duplicate_coords
         for dataset_name, adata in (
@@ -137,7 +137,7 @@ class GraphStabilizationTests(unittest.TestCase):
 
     def test_inverse_distance_excludes_duplicate_coordinate_edge(self):
         adata = _regular_adata(2, 2)
-        coords = np.asarray(adata.obsm["spatial"], dtype=float)
+        coords = np.asarray(adata.obsm["spatial"], dtype=float).copy()
         coords[1] = coords[0]
         adata.obsm["spatial"] = coords
         result = build_spatial_graph(

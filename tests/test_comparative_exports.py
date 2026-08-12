@@ -84,6 +84,22 @@ class ComparativeExportTests(unittest.TestCase):
             )
             self.assertEqual(side_meta["fill_definition"], "R = C - S")
             self.assertIn("transition masks", side_meta["outline_definition"])
+            overview_meta = json.loads(
+                (result.run_dir / "comparative_figures" / "comparative_metric_changes.png.metadata.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(overview_meta["display_mode"], "raw_delta")
+            self.assertFalse(overview_meta["x_axes_shared"])
+            self.assertEqual(
+                overview_meta["panel_titles"]["panel_a"],
+                "Primary spatial-state summary metrics",
+            )
+            self.assertEqual(
+                overview_meta["panel_titles"]["panel_b"],
+                "Topology / component complexity metrics",
+            )
+            self.assertFalse(
+                (result.run_dir / "comparative_figures" / "comparative_metric_changes_standardized.png").exists()
+            )
             for filename in (
                 "comparative_delta_metrics.csv", "comparative_group_statistics.csv",
                 "comparative_regime_transitions.csv", "comparative_warnings.csv",

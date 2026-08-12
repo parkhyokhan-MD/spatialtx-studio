@@ -2,6 +2,53 @@
 
 All notable public and development changes to SpatialTX Studio Desktop are recorded here.
 
+## v0.6-beta — 2026-08-12
+
+- Promoted the validated v0.6 development line to a public source beta and added four release screenshots.
+- Added the H/V computational and audit validation layer without changing FRAME2.6, C/S scoring, spatial metrics, comparability QC, or site warnings.
+- Added explicit default/user-supplied effective-program metadata and `context_gene_audit.csv` with matched, missing, expressed, coverage, scale, source, status, and warning fields.
+- Added context statuses: `available`, `insufficient_gene_coverage`, `no_matched_genes`, `unsupported_expression_scale`, `graph_unavailable`, `not_requested`, and `calculation_error`.
+- Retained H/V raw-median aliases and added raw mean, q75, q90, pair-pooled high-context fraction, local high-context fraction, transition enrichment, and coefficient of variation.
+- Reused the existing pooled-threshold implementation separately inside each Pre/Post pair at q90.
+- Expanded `context_changes.csv`, `multiaxial_pair_summary.csv`, UI H/V details, and supplemental run metadata.
+- Separated legacy single-sample centered-context q80 warnings from pair-pooled raw-context q90 warnings and high fractions in Multi-Pair H/V audit exports.
+- Split the Multiaxial Overview H/V area into independently scaled raw-median Delta and pair-pooled high-context fraction Delta panels so focal upper-tail changes remain visible when medians are zero.
+- Changed the comparative cache schema to `v0.6-hv-validation-v1` so older cached metrics cannot be mistaken for audited output.
+
+## v0.6-dev
+
+- Preserved the v0.5.5 Multi-Pair implementation as a separate stable checkpoint.
+- Added Multiaxial Comparative Analysis to one-to-six-pair Pre/Post comparison.
+- Reused the existing H hypoxia-associated expression-context and V endothelial/angiogenic expression-proxy definitions as optional parallel paired axes.
+- Kept C/S/R, FRAME2.6 masks, transition burden, default thresholds, and Type A/B/C candidate rules unchanged by H/V.
+- Added QC-aware rule-based interpretation with visible Good/Caution/Low comparability and interpretation confidence beside each result.
+- Added compact primary mismatch summaries from spot count, detected genes, observed counts, Q25 counts, spatial extent, tissue components, occupancy, and other available QC.
+- Added `same_site`, `different_site`, and `unknown_site` metadata plus a non-excluding SITE-SHIFT WARNING.
+- Added `context_changes.csv`, `multiaxial_pair_summary.csv`, `comparative_qc_summary.csv`, and `multiaxial_pair_overview.png` while preserving existing exports.
+- Preserved raw Pre, Post, and Delta values; no composite response score or clinical treatment-response inference is calculated.
+- Missing H/V values remain unavailable/NaN and do not fail C/S/FRAME2.6 comparison.
+
+## v0.5.5-beta
+
+- Added a dedicated **Multi-Pair Pre/Post** workflow for one to six independent pairs while preserving the existing Single Pair and group-comparison workflows.
+- Reused the canonical pairwise C/S analysis engine for every pair; `C(x)`, `S(x)`, `R(x)=C(x)-S(x)`, spatial masks, and Type A/B/C candidate rules are unchanged.
+- Added separate Pre, Post, Delta, safe percent-change, and metric-aware direction fields for C, S, R, interface, diffuse, transition burden, adjacency, and compatible topology metrics.
+- Added a transparent rule-based specimen **Comparability Gate** with `Good`, `Caution`, and `Low` classifications plus auditable reasons.
+- Separated Multi-Pair results into three non-composite layers: **Balance change**, **Spatial organization change**, and **Specimen reliability**; Type A/B/C transitions remain derived exploratory descriptors rather than reliability or response classifications.
+- Added configurable rule-based `Minimal/Moderate/Large` pair interpretation, `regime_preserved`, reliability-aware `structure_preserved`, pair status and interpretive flags, exact rule bases, and explicit overinterpretation warnings.
+- Added conservative non-blocking filename pair-ID validation with a pre-run confirmation warning and exported audit fields.
+- Added compact actual spot, detected-gene, observed-count, spatial-extent, tissue-component, and occupancy comparisons with technical, sampling/geometry, and composition-proxy reasons separated.
+- Split the comparative raw-delta overview into independent **Primary spatial-state summary metrics** and **Topology / component complexity metrics** panels, each with its own x-axis and numeric value labels, so large topology-density changes do not flatten fraction/score changes.
+- Added an optional pooled-sample-scale standardized two-panel overview for eligible group analyses; raw Delta remains the default and pairwise standardized values are not invented.
+- Centralized comparability thresholds in `ComparabilityConfig`; technical, sampling, occupancy, gene-coverage, and geometry differences drive the primary gate, while C/S composition proxies remain secondary.
+- Added pair-isolated error handling so unreadable, corrupted, non-spatial, or otherwise failed pairs do not terminate other valid pairs.
+- Retained `pair_results.csv` and added layer-specific tables, `pair_interpretation_summary.csv`, `comparability_details.csv`, and `overview_interpretation.csv`, alongside detailed QC, cohort summary, reproducibility metadata, and three-layer figures.
+- Added an in-application **Rules & interpretation** reference with exact Good/Caution/Low comparability logic, current thresholds, Delta and C/S/R reading guidance, missing-QC behavior, and research-only interpretation limits.
+- Added descriptive cohort counts without treatment-response, efficacy, responder, drug-sensitivity, or predictive-performance labels.
+- Corrected side-by-side R-map footer spacing so the transition-outline legend and run metadata no longer overlap.
+- Did not add AI/ML, new biological axes, comparative QUBO, quantum backends, registration, or spot-wise subtraction.
+- Outputs remain exploratory and are not intended for diagnosis, treatment selection, or clinical decision-making.
+
 ## v0.5-beta
 
 - Improved pairwise Comparative Analysis sample selection for long directories: filename-first Sample A/B labels, duplicate-name disambiguation, and separate read-only full-path fields now keep the selected H5AD files identifiable in narrow windows.

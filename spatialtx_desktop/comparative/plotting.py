@@ -18,6 +18,24 @@ from .metric_registry import (
 from .models import EXPLORATORY_NOTICE, NO_REGISTRATION_NOTICE, ComparativeConfig
 
 
+PRIMARY_SPATIAL_STATE_METRICS = (
+    "localized_interface_fraction",
+    "diffuse_fraction",
+    "transition_burden_score",
+    "R_crossing_fraction",
+    "largest_diffuse_component_ratio",
+    "small_component_fraction",
+)
+
+TOPOLOGY_COMPONENT_COMPLEXITY_METRICS = (
+    "diffuse_components_per_1000_valid_spots",
+    "diffuse_components_per_tissue_component",
+    "small_components_per_1000_valid_spots",
+    "transition_components_per_1000_transition_spots",
+    "normalized_fragmentation_score",
+)
+
+
 def _plot_modules():
     import matplotlib
 
@@ -105,27 +123,140 @@ def _label_horizontal_bars(ax, bars, values: list[float]) -> None:
         )
 
 
-def _mean_change_rows(metric_changes: pd.DataFrame, definitions) -> pd.DataFrame:
+def _mean_change_rows(
+    metric_changes: pd.DataFrame,
+    definitions,
+    *,
+    value_column: str = "raw_delta",
+) -> pd.DataFrame:
     rows: list[dict] = []
     for definition in definitions:
         selected = metric_changes.loc[
             metric_changes["metric_name"].eq(definition.internal_name)
             & metric_changes["status"].eq("ok")
         ]
-        values = pd.to_numeric(selected.get("raw_delta"), errors="coerce").dropna()
+        if value_column not in selected:
+            continue
+        values = pd.to_numeric(selected.get(value_column), errors="coerce").dropna()
         if not len(values):
             continue
         reference = pd.to_numeric(selected.get("reference_value"), errors="coerce").dropna()
         target = pd.to_numeric(selected.get("target_value"), errors="coerce").dropna()
-        rows.append({
+        row = {
             "metric_name": definition.internal_name,
             "display_name": definition.display_name,
             "unit": definition.unit,
-            "raw_delta": float(values.mean()),
+            value_column: float(values.mean()),
             "reference_value": float(reference.mean()) if len(reference) else np.nan,
             "target_value": float(target.mean()) if len(target) else np.nan,
-        })
+        }
+        if value_column != "raw_delta":
+            raw_values = pd.to_numeric(selected.get("raw_delta"), errors="coerce").dropna()
+            row["raw_delta"] = float(raw_values.mean()) if len(raw_values) else np.nan
+        rows.append(row)
     return pd.DataFrame(rows)
+
+
+def _metric_definitions(names: tuple[str, ...]):
+    definitions = {definition.internal_name: definition for definition in METRIC_REGISTRY}
+    return tuple(definitions[name] for name in names)
+
+
+def _plot_overview_panel(ax, data: pd.DataFrame, value_column: str, title: str, x_label: str) -> list[dict]:
+    ax.set_title(title, fontsize=11, weight="bold")
+    if data.empty:
+        ax.text(0.5, 0.5, "No available metrics", ha="center", va="center")
+        ax.axis("off")
+        return []
+    raw_values = data[value_column].astype(float).tolist()
+    values = [0.0 if abs(value) <= 1e-12 else value for value in raw_values]
+    positions = np.arange(len(data))
+    bars = ax.barh(
+        positions,
+        values,
+        color=["#b91c1c" if value < 0 else "#0369a1" for value in values],
+        alpha=0.86,
+    )
+    ax.set_yticks(positions, data["display_name"])
+    ax.invert_yaxis()
+    ax.axvline(0, color="#111827", linewidth=0.9)
+    ax.set_xlabel(x_label)
+    ax.grid(axis="x", alpha=0.2)
+    ax.margins(x=0.26)
+    _label_horizontal_bars(ax, bars, values)
+    return data.to_dict("records")
+
+
+def _plot_two_panel_metric_overview(
+    metric_changes: pd.DataFrame,
+    output: Path,
+    config: ComparativeConfig,
+    *,
+    value_column: str,
+    figure_type: str,
+    overall_title: str,
+    x_label: str,
+    effective_mode: str | None = None,
+) -> Path | None:
+    panel_a = _mean_change_rows(
+        metric_changes,
+        _metric_definitions(PRIMARY_SPATIAL_STATE_METRICS),
+        value_column=value_column,
+    )
+    panel_b = _mean_change_rows(
+        metric_changes,
+        _metric_definitions(TOPOLOGY_COMPONENT_COMPLEXITY_METRICS),
+        value_column=value_column,
+    )
+    if value_column != "raw_delta" and panel_a.empty and panel_b.empty:
+        return None
+
+    plt = _plot_modules()
+    fig, axes = plt.subplots(1, 2, figsize=(17, 7.2), sharex=False)
+    displayed = {
+        "panel_a": _plot_overview_panel(
+            axes[0],
+            panel_a,
+            value_column,
+            "Panel A — Primary spatial-state summary metrics",
+            x_label,
+        ),
+        "panel_b": _plot_overview_panel(
+            axes[1],
+            panel_b,
+            value_column,
+            "Panel B — Topology / component complexity metrics",
+            x_label,
+        ),
+    }
+    fig.suptitle(overall_title, fontsize=13, weight="bold")
+    fig.tight_layout(rect=(0, 0.055, 1, 0.94), w_pad=4.0)
+    return _save(
+        fig,
+        output,
+        config,
+        figure_type,
+        {
+            "display_mode": value_column,
+            "panel_titles": {
+                "panel_a": "Primary spatial-state summary metrics",
+                "panel_b": "Topology / component complexity metrics",
+            },
+            "panel_metric_names": {
+                "panel_a": list(PRIMARY_SPATIAL_STATE_METRICS),
+                "panel_b": list(TOPOLOGY_COMPONENT_COMPLEXITY_METRICS),
+            },
+            "displayed_values": displayed,
+            "x_axes_shared": False,
+            "numeric_value_labels": True,
+            "raw_values_preserved_in_csv_and_metadata": True,
+            "tissue_denominator_note": (
+                "The existing diffuse_components_per_tissue_component metric is retained; "
+                "it is not labeled as physical tissue area."
+            ),
+        },
+        effective_mode=effective_mode,
+    )
 
 
 def _plot_change_group(
@@ -196,38 +327,37 @@ def plot_metric_change(
     *,
     effective_mode: str | None = None,
 ) -> Path:
-    """Backward-compatible overview that prioritizes normalized/fraction metrics."""
-    definitions = tuple(
-        definition
-        for definition in METRIC_REGISTRY
-        if definition.interpretation_priority <= 1
-        and not definition.deprecated
-        and not definition.scale_sensitive
-        and not definition.observational_only
-    )
-    data = _mean_change_rows(metric_changes, definitions)
-    plt = _plot_modules()
-    fig, ax = plt.subplots(figsize=(10, max(4.5, 0.42 * max(len(data), 1))))
-    if data.empty:
-        ax.text(0.5, 0.5, "No available primary metrics", ha="center", va="center")
-        ax.axis("off")
-    else:
-        values = data["raw_delta"].astype(float).tolist()
-        bars = ax.barh(np.arange(len(data)), values, color=["#b91c1c" if v < 0 else "#0369a1" for v in values])
-        ax.set_yticks(np.arange(len(data)), data["display_name"])
-        ax.invert_yaxis()
-        ax.axvline(0, color="#111827", linewidth=0.9)
-        ax.set_xlabel("Delta = Target - Reference (see category figures for units)")
-        ax.grid(axis="x", alpha=0.2)
-        _label_horizontal_bars(ax, bars, values)
-    ax.set_title("Primary comparative changes (compatibility overview)\nRaw topology counts are shown separately")
-    fig.tight_layout(rect=(0, 0.05, 1, 1))
-    return _save(
-        fig,
+    """Raw-delta overview with independent primary and topology axes."""
+    result = _plot_two_panel_metric_overview(
+        metric_changes,
         output,
         config,
-        "compatibility_primary_metric_overview",
-        {"raw_values_preserved_in_csv": True, "category_figures_are_primary": True},
+        value_column="raw_delta",
+        figure_type="compatibility_primary_metric_overview",
+        overall_title="Comparative spatial change overview — raw delta (Target - Reference)",
+        x_label="Raw delta = Target - Reference",
+        effective_mode=effective_mode,
+    )
+    assert result is not None
+    return result
+
+
+def plot_standardized_metric_change(
+    metric_changes: pd.DataFrame,
+    output: Path,
+    config: ComparativeConfig,
+    *,
+    effective_mode: str | None = None,
+) -> Path | None:
+    """Optional group-only overview using pooled-sample-scale standardized deltas."""
+    return _plot_two_panel_metric_overview(
+        metric_changes,
+        output,
+        config,
+        value_column="standardized_delta",
+        figure_type="standardized_two_panel_metric_overview",
+        overall_title="Comparative spatial change overview — standardized change",
+        x_label="Standardized delta (pooled sample SD)",
         effective_mode=effective_mode,
     )
 
@@ -418,7 +548,8 @@ def plot_side_by_side_maps(
     finite = np.r_[np.asarray(ref["R"], dtype=float), np.asarray(tar["R"], dtype=float)]
     limit = float(np.nanmax(np.abs(finite))) if np.isfinite(finite).any() else 1.0
     limit = max(limit, np.finfo(float).eps)
-    fig, axes = plt.subplots(1, 2, figsize=(11, 5.4))
+    # Reserve an independent footer band for the legend and the common run notice.
+    fig, axes = plt.subplots(1, 2, figsize=(11, 6.0))
     for ax, sample, fields in ((axes[0], reference_sample, ref), (axes[1], target_sample, tar)):
         coords = np.asarray(fields["coords"], dtype=float)
         image = ax.scatter(
@@ -438,9 +569,15 @@ def plot_side_by_side_maps(
         Line2D([0], [0], marker="o", color="none", markerfacecolor="none", markeredgecolor="#111827",
                markersize=7, label="Outline: transition candidate (localized interface-like or diffuse mask)"),
     ]
-    fig.legend(handles=legend, loc="lower center", frameon=False, fontsize=9)
+    fig.legend(
+        handles=legend,
+        loc="lower center",
+        bbox_to_anchor=(0.5, 0.065),
+        frameon=False,
+        fontsize=9,
+    )
     fig.suptitle("Side-by-side selected sample R maps (no registration or spot-wise subtraction)")
-    fig.tight_layout(rect=(0, 0.10, 1, 0.93))
+    fig.tight_layout(rect=(0, 0.16, 1, 0.93))
     return _save(
         fig,
         output,
@@ -733,6 +870,14 @@ def generate_comparative_figures(
     figures.append(plot_metric_change(
         metric_change_table, output_dir / "comparative_metric_changes.png", config, effective_mode=effective_mode
     ))
+    standardized_overview = plot_standardized_metric_change(
+        metric_change_table,
+        output_dir / "comparative_metric_changes_standardized.png",
+        config,
+        effective_mode=effective_mode,
+    )
+    if standardized_overview is not None:
+        figures.append(standardized_overview)
     figures.append(_copy_compatibility_figure(
         output_dir / "comparative_HV_summary.png",
         output_dir / "comparative_H_V_context.png",

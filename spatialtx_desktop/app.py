@@ -383,7 +383,7 @@ class SpatialTXDesktop(tk.Tk):
             ("Creator", AUTHOR),
             ("Version", f"v{__version__}"),
             ("Build date", BUILD_DATE),
-            ("Edition", "v0.5-beta public source release"),
+            ("Edition", "v0.6-beta public source release"),
         ]
         for row, (label, value) in enumerate(details):
             ttk.Label(card, text=label, font=("Segoe UI Semibold", 9)).grid(row=row, column=0, sticky="nw", pady=4)
@@ -403,10 +403,15 @@ class SpatialTXDesktop(tk.Tk):
                 "inputs as canonical H5AD before Main Mapper analysis. The desktop edition also retains the fixed-cardinality "
                 "QUBO-inspired optimizer.\n\n"
                 "Operational regime labels are exploratory candidates and are not validated biological subtypes."
-                "\n\nv0.5-beta adds Comparative Spatial Transition Analysis for pairwise, paired-group, unpaired-group, "
+                "\n\nv0.6-beta provides Comparative Spatial Transition Analysis for pairwise, paired-group, unpaired-group, "
                 "and manifest-based sample-level comparisons. It does not perform direct spatial registration or "
-                "spot-wise subtraction. H_expr and V_expr remain optional observational context and do not alter "
-                "C/S/R, transition masks, or Type A/B/C candidate labels. Existing single-sample behavior remains unchanged."
+                "spot-wise subtraction. The Multi-Pair workflow now displays existing H_expr and V_expr definitions as "
+                "optional parallel observational context axes; they do not alter C/S/R, transition masks, or Type A/B/C "
+                "candidate labels. Up to six independent pairs retain transparent Good/Caution/Low specimen comparability "
+                "QC, QC-aware interpretation, anatomical-site metadata warnings, raw multiaxial exports, and pair-isolated "
+                "error handling. The H/V computational and audit validation layer records effective genes, per-sample "
+                "coverage/status, raw q90, within-pair pooled high-context fractions, and local high-context fractions. "
+                "No combined response score is calculated. Existing single-sample and Single Pair behavior remains unchanged."
             ),
             wraplength=430, justify="left",
         ).pack(anchor="nw", fill="x")

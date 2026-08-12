@@ -1,10 +1,21 @@
 # SpatialTX Studio Desktop developer notes
 
-Current release line: v0.5-beta
+Current release line: v0.6-beta
 
-Development start date: 2026-08-04
+Development start date: 2026-08-10
 
-The v0.5-beta source release builds on the v0.4 analysis line while keeping the single-sample scoring contracts unchanged.
+v0.6-beta promotes the validated multiaxial checkpoint and H/V computational audit layer to a public source beta. Existing H/V context definitions are reused, effective programs and coverage are auditable, focal upper-tail context is summarized within each pair, and no H/V metric modifies C/S/R, FRAME2.6, comparability QC, or site warnings.
+
+The preserved v0.5.5-beta source line incrementally extends v0.5 comparative analysis while keeping all single-sample and established Single Pair scoring contracts unchanged.
+
+## v0.5.5-beta scope
+
+- Adds one-to-six independent Multi-Pair Pre/Post analysis as a separate sub-workspace under Comparative Analysis.
+- Reuses the established pairwise analyzer and one immutable shared configuration across all selected pairs.
+- Adds a transparent specimen comparability gate before interpretation, without treating comparability as biological certainty.
+- Isolates pair failures and retains successful pair results.
+- Adds compact pair-level, overview, comparability-QC, cohort-count, metadata, and figure exports.
+- Does not activate future H/V/M/P axes, AI/ML, QUBO, quantum, treatment-response, or clinical-efficacy features.
 
 ## v0.5-beta scope
 

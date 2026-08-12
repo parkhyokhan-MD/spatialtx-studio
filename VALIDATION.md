@@ -1,5 +1,61 @@
 # SpatialTX Studio Desktop validation record
 
+## v0.6-beta release packaging
+
+Validation date: 2026-08-12
+
+- Promoted the validated v0.6 multiaxial and H/V audit line to the public `v0.6-beta` version without changing the analysis algorithms or output schemas.
+- Python compilation passed for `spatialtx_desktop`, `spatialtx_studio`, `tests`, and `tools` under Python 3.12.13.
+- Full release suite: **171 tests passed plus 26 subtests**; 20 existing AnnData implicit-index and SciPy Matrix Market transition warnings were reported.
+- Updated two duplicate-coordinate test fixtures to copy AnnData 0.13 read-only coordinate arrays before mutation; application behavior is unchanged.
+- Verified the four v0.6 screenshot assets and their README/desktop-guide links.
+- Package version is `0.6b0`; application version is `0.6-beta`.
+
+## v0.6-dev-HV-validation
+
+Validation date: 2026-08-11
+
+- Added the H/V computational and audit validation layer in a separate working copy; the v0.6-dev and v0.5.5 checkpoints remain unchanged.
+- Full suite: **169 tests passed plus 26 subtests**. The 20 warnings are the existing AnnData implicit-index and SciPy Matrix Market transition warnings.
+- Reused the existing default H/V programs and existing pooled-threshold implementation.
+- Actual six-pair regression matched v0.5.5 exactly for C/S/R, regimes, interface, diffuse, burden, adjacency, fragmentation, and comparability.
+- Regimes remained 5/6 A-to-A and 1/6 A-to-B; comparability remained five Low and one Caution.
+- Pair 5 (`sample_43`) had complete 12/12 H and V coverage in both samples and finite median, q90, shared-threshold high fraction, and local high-context fraction outputs.
+- Verified an actual zero-median V case (`sample_30`): both medians were zero while q90/high/local context summaries retained focal signal.
+- Effective programs, q90 scope, raw method, and cache schema are recorded in `run_metadata.json`; per-sample coverage/status is in `context_gene_audit.csv`.
+- See `H_V_COMPUTATIONAL_AUDIT_VALIDATION_REPORT.md` for formulas and exact review values.
+
+## v0.6-dev Multiaxial Comparative Analysis
+
+Validation date: 2026-08-11
+
+- Preserved the v0.5.5 source checkpoint separately and implemented v0.6-dev in a distinct working folder.
+- Python compilation passed for `spatialtx_desktop`, `spatialtx_studio`, `tests`, and development validation tools.
+- Full suite: **166 tests passed plus 26 subtests**. Existing importer, Main Mapper, Single Pair, GeoFlat, graph, optimizer, Advanced Analysis, spatial-QC, and v0.5.5 Multi-Pair tests remain passing.
+- Added focused coverage for available H/V, missing H/V, unchanged C/S/FRAME2.6 outputs with H/V enabled, raw multiaxial exports, different-site warning behavior, Low-QC interpretation, and A-to-A interface-down/diffuse-up redistribution wording.
+- Re-ran the actual six-pair GSE316402/BTC working set using the preserved C/S genes, thresholds, scoring options, graph settings, and seed. v0.5.5 and v0.6 produced an exact CSV-string match for regime labels, interface fractions, diffuse fractions, transition burden, and comparability.
+- The six-pair result remained **5/6 Type_A_candidate to Type_A_candidate** and **1/6 Type_A_candidate to Type_B_candidate** (`sample_30`). Comparability remained five `Low` and one `Caution` (`sample_41`).
+- Enabled existing H/V programs in the v0.6 run and verified that H/V did not alter any listed core result. H/V raw Pre/Post/Delta values were exported independently.
+- Verified `multiaxial_pair_summary.csv`, `comparative_qc_summary.csv`, `context_changes.csv`, and `figures/multiaxial_pair_overview.png` on the actual six-pair run.
+- Visually reviewed the multiaxial figure. C/S, spatial organization, and H/V use independent axes centered on zero, exact numeric labels, extra label margins, and no composite score.
+- No treatment-response, efficacy, responder, survival, perfusion, or clinical-decision inference is generated.
+
+## v0.5.5-beta Multi-Pair Pre/Post
+
+Validation date: 2026-08-11
+
+- Added automated coverage for one-pair and six-pair runs, non-contiguous populated UI rows, the six-pair limit and seven-pair rejection, pair-isolated corrupted input, intentional specimen mismatch, exports, metadata, direction tolerances, and composition-proxy classification limits.
+- Full suite: **162 tests passed** on 2026-08-11. Existing importer, Main Mapper, Single Pair, graph, optimizer, Advanced Analysis, and spatial-QC tests remain passing.
+- Verified that technical and sampling mismatches produce auditable `Caution` or `Low` reasons and that a C/S composition proxy alone cannot produce `Low`.
+- Verified separate Pre, Post, Delta, percent-change, and direction exports for C, S, R, interface, diffuse, transition burden, adjacency, and compatible topology metrics.
+- Verified the three-layer UI and output contract: `balance_changes.csv`, `spatial_organization_changes.csv`, and `specimen_reliability.csv` remain separate while `pair_results.csv` is retained for compatibility. The overview contains aligned layer summaries but no composite response or quality score.
+- Visually reviewed the generated three-layer overview and pair-level figure for readable layer labels, reliability warning placement, and non-overlapping footer text.
+- Re-ran the existing five-pair GSE316402/BTC working set with its preserved v0.5.5 settings: 5/5 pairs passed; all five retained `Type_A_candidate → Type_A_candidate`; four were `Low` and one `Caution`, matching the prior run. All filename IDs matched on the explicit `sample_N` token despite distinct GSM accessions.
+- Verified pair-level qualitative classes, exact threshold bases, regime/structure preservation, compact comparability ratios, technical-versus-sampling reason separation, Low-comparability cautions, and all three new interpretation exports.
+- Added regression coverage for the required `balance shift with preserved structure, low comparability` case, conservative pair-ID matching/mismatch warnings, accession-only non-inference, and invalid interpretation-threshold rejection.
+- Verified that Single Pair Comparative Analysis, Main Mapper, importers, graph tools, Advanced Analysis, C/S definitions, and Type A/B/C rules remain unchanged.
+- Multi-Pair outputs are descriptive and do not calculate treatment response rate, therapeutic efficacy, responder status, drug sensitivity, or clinical prediction.
+
 ## v0.5-beta Comparative Analysis
 
 Validation date: 2026-08-04

@@ -76,7 +76,7 @@ class ComparativeConfig:
         if int(self.bootstrap_iterations) < 100:
             raise ValueError("Bootstrap iterations must be at least 100.")
         if self.fdr_method != "benjamini-hochberg":
-            raise ValueError("v0.5-beta supports Benjamini-Hochberg FDR only.")
+            raise ValueError("v0.6-beta supports Benjamini-Hochberg FDR only.")
 
     def to_dict(self) -> dict:
         return asdict(self)

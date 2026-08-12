@@ -17,6 +17,7 @@ from PIL import Image, ImageTk
 from .comparative.models import ComparativeConfig, ComparativeRunResult, SampleRecord
 from .comparative.runner import run_comparative_analysis
 from .comparative.validation import load_comparative_manifest, preflight_records, validate_record_structure
+from .multi_pair_ui import MultiPairAnalysisPanel
 
 
 def _sample_display_labels(sample_paths: list[Path]) -> tuple[list[str], dict[str, str]]:
@@ -114,7 +115,20 @@ class ComparativeAnalysisPanel(ttk.Frame):
         self.after(100, self._poll)
 
     def _build(self) -> None:
-        top = ttk.LabelFrame(self, text="Comparative Spatial Transition Analysis — v0.5-beta", padding=10)
+        workflow_tabs = ttk.Notebook(self)
+        workflow_tabs.pack(fill="both", expand=True)
+        single_pair_tab = ttk.Frame(workflow_tabs, padding=7)
+        self.multi_pair_panel = MultiPairAnalysisPanel(
+            workflow_tabs,
+            get_genes=self.get_genes,
+            get_quantiles=self.get_quantiles,
+            get_scoring_options=self.get_scoring_options,
+            get_output=lambda: self.output_var.get(),
+        )
+        workflow_tabs.add(single_pair_tab, text="Single Pair / Existing")
+        workflow_tabs.add(self.multi_pair_panel, text="Multi-Pair Pre/Post")
+
+        top = ttk.LabelFrame(single_pair_tab, text="Comparative Spatial Transition Analysis — v0.6-beta", padding=10)
         top.pack(fill="x")
         ttk.Label(
             top,
@@ -127,7 +141,7 @@ class ComparativeAnalysisPanel(ttk.Frame):
             justify="left",
         ).pack(anchor="w", fill="x")
 
-        settings = ttk.Panedwindow(self, orient="horizontal")
+        settings = ttk.Panedwindow(single_pair_tab, orient="horizontal")
         settings.pack(fill="x", pady=(8, 0))
         inputs = ttk.LabelFrame(settings, text="1–2  Comparison mode and input", padding=9)
         analysis = ttk.LabelFrame(settings, text="3  Reused analysis settings", padding=9)
@@ -223,7 +237,7 @@ class ComparativeAnalysisPanel(ttk.Frame):
         ttk.Label(stats, text="Benjamini-Hochberg", foreground="#4b5563").grid(row=1, column=1, sticky="w", padx=(6, 0))
         ttk.Spinbox(stats, from_=0, to=2147483647, textvariable=self.seed_var, width=12).grid(row=1, column=2, sticky="ew", padx=(6, 0))
 
-        actions = ttk.LabelFrame(self, text="4  Validate and run", padding=8)
+        actions = ttk.LabelFrame(single_pair_tab, text="4  Validate and run", padding=8)
         actions.pack(fill="x", pady=(8, 0))
         ttk.Label(actions, text="Output root").pack(side="left")
         ttk.Entry(actions, textvariable=self.output_var).pack(side="left", fill="x", expand=True, padx=6)
@@ -235,7 +249,7 @@ class ComparativeAnalysisPanel(ttk.Frame):
         self.cancel_button = ttk.Button(actions, text="Cancel safely", command=self._cancel, state="disabled")
         self.cancel_button.pack(side="left", padx=(5, 0))
 
-        result_tabs = ttk.Notebook(self)
+        result_tabs = ttk.Notebook(single_pair_tab)
         result_tabs.pack(fill="both", expand=True, pady=(8, 0))
         summary_tab = ttk.Frame(result_tabs, padding=6)
         delta_tab = ttk.Frame(result_tabs, padding=6)
@@ -284,7 +298,7 @@ class ComparativeAnalysisPanel(ttk.Frame):
         self.figure_canvas.pack(fill="both", expand=True, pady=(6, 0))
         self.figure_canvas.bind("<Configure>", self._schedule_figure_resize)
 
-        footer = ttk.Frame(self)
+        footer = ttk.Frame(single_pair_tab)
         footer.pack(fill="x", pady=(7, 0))
         self.progress = ttk.Progressbar(footer, mode="indeterminate", length=160)
         self.progress.pack(side="left")
@@ -526,7 +540,8 @@ class ComparativeAnalysisPanel(ttk.Frame):
             result.metric_change_table if not result.metric_change_table.empty else result.delta_metrics,
             [
                 "comparison_id", "display_name", "reference_value", "target_value", "raw_delta",
-                "normalized_delta", "symmetric_percent_change", "scale_sensitive", "observational_only", "warning",
+                "standardized_delta", "normalized_delta", "symmetric_percent_change", "scale_sensitive",
+                "observational_only", "warning",
             ],
         )
         self._fill_tree(self.transition_tree, result.regime_transitions, ["comparison_id", "reference_regime", "target_regime", "regime_transition", "transition_confidence_flag"])
@@ -549,7 +564,8 @@ class ComparativeAnalysisPanel(ttk.Frame):
         figure_groups = {
             "comparative_summary_card.png": "Overview — Summary card",
             "comparative_group_distributions.png": "Overview — Group distributions",
-            "comparative_metric_changes.png": "Overview — Compatibility metric overview",
+            "comparative_metric_changes.png": "Overview — Raw delta (two independent panels)",
+            "comparative_metric_changes_standardized.png": "Overview — Standardized change (group analyses)",
             "comparative_program_score_changes.png": "Program scores — Changes",
             "comparative_transition_changes.png": "Transition metrics — Changes",
             "comparative_graph_changes.png": "Graph metrics — Changes",

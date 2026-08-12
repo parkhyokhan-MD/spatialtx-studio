@@ -39,9 +39,30 @@ class ComparativeUITests(unittest.TestCase):
             self.assertIn("Main Mapper", labels)
             self.assertIn("Comparative Analysis", labels)
             self.assertIsInstance(app.comparative_analysis_panel, ComparativeAnalysisPanel)
-            self.assertEqual(app.title(), "SpatialTX Studio Desktop v0.5-beta")
+            self.assertEqual(app.title(), "SpatialTX Studio Desktop v0.6-beta")
             self.assertFalse(app.comparative_analysis_panel.busy)
             panel = app.comparative_analysis_panel
+            self.assertFalse(panel.multi_pair_panel.busy)
+            rules_panel = panel.multi_pair_panel
+            rules = rules_panel.rules_text.get("1.0", "end")
+            multi_pair_tabs = [
+                rules_panel.result_tabs.tab(tab_id, "text") for tab_id in rules_panel.result_tabs.tabs()
+            ]
+            self.assertIn("1  Balance change", multi_pair_tabs)
+            self.assertIn("2  Spatial organization", multi_pair_tabs)
+            self.assertIn("3  Specimen reliability", multi_pair_tabs)
+            self.assertIn("Pair interpretation", multi_pair_tabs)
+            self.assertIn("Delta = Post - Pre", rules)
+            self.assertIn("THREE SEPARATE RESULT LAYERS", rules)
+            self.assertIn("not combined into a single response", rules)
+            self.assertIn("TRANSPARENT QUALITATIVE CHANGE LABELS", rules)
+            self.assertIn("PAIR-ID SAFETY CHECK", rules)
+            self.assertIn("Low: any primary Low reason", rules)
+            self.assertIn("Spot-count fold ratio: 1.50 / 2.50", rules)
+            self.assertIn("cannot by itself produce Low", rules)
+            self.assertIn("do not establish treatment response", rules)
+            rules_panel._show_rules_tab()
+            self.assertEqual(rules_panel.result_tabs.select(), str(rules_panel.rules_tab))
             panel._load_result(ComparativeRunResult(
                 run_dir=Path.cwd(),
                 sample_metrics=pd.DataFrame([{
@@ -72,6 +93,31 @@ class ComparativeUITests(unittest.TestCase):
             ))
             self.assertIn("Caution", panel.scale_banner_var.get())
             self.assertIn("observational only", panel.hv_notice_var.get())
+        finally:
+            app.destroy()
+
+    def test_multi_pair_rows_one_two_and_six_run_as_three_pairs(self) -> None:
+        try:
+            app = SpatialTXDesktop()
+        except tk.TclError as exc:
+            self.skipTest(f"Tk display unavailable: {exc}")
+        try:
+            app.withdraw()
+            panel = app.comparative_analysis_panel.multi_pair_panel
+            self.assertEqual(len(panel.pair_vars), 6)
+            for variables in panel.pair_vars:
+                variables["label"].set("")
+                variables["pre"].set("")
+                variables["post"].set("")
+            for index in (0, 1, 5):
+                panel.pair_vars[index]["label"].set(f"P{index + 1}")
+                panel.pair_vars[index]["pre"].set(f"C:/data/pre_{index + 1}.h5ad")
+                panel.pair_vars[index]["post"].set(f"C:/data/post_{index + 1}.h5ad")
+            pairs = panel._pairs()
+            self.assertEqual([pair.label for pair in pairs], ["P1", "P2", "P6"])
+            panel.pair_vars[2]["pre"].set("C:/data/incomplete.h5ad")
+            with self.assertRaisesRegex(ValueError, "partially filled"):
+                panel._pairs()
         finally:
             app.destroy()
 

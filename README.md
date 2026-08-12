@@ -1,4 +1,4 @@
-# SpatialTX Studio Desktop v0.5-beta
+# SpatialTX Studio Desktop v0.6-beta
 
 > Public source beta. Exploratory research use only.
 
@@ -6,7 +6,52 @@ SpatialTX Studio Desktop is an open-source research workspace for exploratory sp
 
 This software is a research prototype. It is not intended for diagnosis, treatment selection, or clinical decision-making. Outputs are exploratory and require independent review and validation.
 
-## What is new in v0.5-beta
+## What is new in v0.6-beta
+
+v0.6-beta adds **Multiaxial Comparative Analysis + QC-aware paired interpretation** and makes focal H/V context auditable. It is computational validation and output auditing, not biological validation.
+
+- Resolves and records the effective existing default or user-supplied H/V gene programs.
+- Exports one H/V coverage and status row per sample in `context_gene_audit.csv`.
+- Distinguishes valid zero values from unavailable `NaN` values using explicit statuses.
+- Retains backward-compatible H/V raw medians and adds raw mean, q75, q90, transition enrichment, coefficient of variation, pair-pooled high-context fraction, and local high-context fraction.
+- Uses one q90 threshold from pooled Pre+Post values within each individual pair; thresholds are never pooled across different patients.
+- Bumps the comparative cache schema to `v0.6-hv-validation-v1`.
+- Does not modify C/S/R, FRAME2.6, Type A/B/C, spatial metrics, comparability QC, or site warnings.
+
+### Multiaxial comparative foundation
+
+v0.6-beta extends the preserved v0.5.5 Multi-Pair workflow. The primary model remains `C(x)`, `S(x)`, and `R(x)=C(x)-S(x)` with unchanged FRAME2.6 Type A/B/C candidate rules.
+
+- The existing H and V programs are available as optional parallel axes in paired analysis: H is hypoxia-associated expression context; V is an endothelial/angiogenic expression proxy, not perfusion or measured vascularity.
+- Every pair displays its biological/spatial result beside specimen comparability (`Good`, `Caution`, or `Low`) and rule-based interpretation confidence. `Low` does not suppress the result; it adds an explicit caution against direct biological or treatment attribution.
+- Each pair accepts `same_site`, `different_site`, or `unknown_site`. `different_site` produces a visible `SITE-SHIFT WARNING` without excluding the pair.
+- New raw-value exports are `multiaxial_pair_summary.csv`, `comparative_qc_summary.csv`, `context_changes.csv`, and `figures/multiaxial_pair_overview.png`.
+- The multiaxial overview keeps C/S balance, spatial organization, and H/V context in independent panels with centered zero lines and exact Delta labels. It does not calculate a composite response score.
+- H/V are optional. Missing context genes are exported as `NaN/not available` and do not interrupt C/S/FRAME2.6 analysis.
+- H/V never alter C/S/R, transition masks, interface/diffuse metrics, transition burden, or Type A/B/C candidate labels.
+
+## Preserved v0.5.5-beta foundation
+
+The v0.5.5-beta implementation remains preserved as the stable checkpoint. Its Main Mapper, `C(x)`, `S(x)`, `R(x)=C(x)-S(x)`, Type A/B/C candidate rules, importers, Single Pair workflow, and experimental tools remain available without a biological-model redesign.
+
+- **Multi-Pair Pre/Post** runs one to six independent Pre/Post pairs with one shared set of C/S genes, thresholds, scoring options, and graph settings.
+- Results are organized as three non-composite layers: **1 Balance change** (`C`, `S`, `R=C-S`), **2 Spatial organization change** (interface, diffuse, adjacency, fragmentation, and topology), and **3 Specimen reliability** (comparability plus technical/sampling QC).
+- A **Pair interpretation** panel assigns transparent `Minimal`, `Moderate`, or `Large` descriptive change classes, reports `regime_preserved` and `structure_preserved`, and displays a reliability-qualified interpretive flag. Thresholds are centralized in `PairInterpretationConfig`; these labels are not treatment-response classes.
+- Compact reliability output shows the actual spot-count, detected-gene, observed-count, spatial-extent, tissue-component, and occupancy comparisons where available, with technical and sampling/composition-proxy reasons separated.
+- A conservative filename check warns about a possible patient/sample pair-ID mismatch before running. It does not treat accessions alone as patient IDs and does not automatically block or reclassify a comparison.
+- Every successful pair retains separate Pre, Post, Delta, percent-change status, and direction fields for C, S, R, interface, diffuse, transition burden, adjacency, and compatible topology metrics. Primary C/S/R state rows use existing field medians; near-zero-centered means remain separate compatibility columns.
+- A transparent **Comparability Gate** reports `Good`, `Caution`, or `Low` separately from the observed change. It prioritizes technical quality and tissue-sampling differences; C/S distribution proxies are secondary and cannot alone produce `Low`.
+- A failed or corrupted pair is recorded as `ERROR` without terminating the other selected pairs.
+- Exports retain `pair_results.csv` for compatibility and add layer-specific tables plus `pair_interpretation_summary.csv`, `comparability_details.csv`, and `overview_interpretation.csv`, alongside detailed QC, metadata, and figures.
+- The Multi-Pair screen includes **How to read results** and **Rules & interpretation**, which explain Delta direction, C/S/R summaries, Good/Caution/Low comparability logic, default thresholds, missing-QC handling, and interpretation limits inside the application.
+- Direction arrows use metric-specific near-zero tolerances while exact numeric values remain in the CSV exports.
+- Side-by-side R-map footer spacing is corrected so the transition-outline legend no longer overlaps run metadata.
+- The raw comparative overview uses two independent x-axes: **Primary spatial-state summary metrics** for fraction/score/ratio changes and **Topology / component complexity metrics** for component densities. Numeric Delta labels are printed on every bar.
+- Eligible group analyses also export an optional pooled-sample-scale standardized two-panel view. Raw Delta remains the default; pairwise standardized change is not computed from only two observations.
+
+Observed changes remain descriptive. Comparability is specimen/sampling context, not a probability that a biological interpretation is true. The workflow does not calculate treatment response rate, therapeutic efficacy, responder status, drug sensitivity, or predictive accuracy.
+
+## Preserved v0.5 comparative foundation
 
 v0.5-beta adds **Comparative Spatial Transition Analysis** without changing the established single-sample Main Mapper. It compares sample-level summaries for pairwise, paired-group, unpaired-group, and CSV-manifest designs. AnnData `.h5ad` remains the canonical analysis input.
 
@@ -19,7 +64,7 @@ v0.5-beta adds **Comparative Spatial Transition Analysis** without changing the 
 - Centered H/V sample means are retained only for compatibility and excluded from primary interpretation; available non-centered H/V summaries use a pooled reference/target threshold and remain observational only.
 - Timestamped CSV, JSON, HTML, PDF, logs, fresh figures, input hashes, warnings, failures, and environment metadata are exported.
 
-This release does not add candidate discovery, ligand-receptor analysis, comparative QUBO, AI interpretation, literature search, or multi-axis modeling. See [Comparative Analysis documentation](docs/COMPARATIVE_ANALYSIS.md).
+The comparative workflow does not add candidate discovery, ligand-receptor analysis, comparative QUBO, AI/ML diagnosis, or literature search. v0.6 reuses the existing H/V definitions rather than inventing new axes. See [Comparative Analysis documentation](docs/COMPARATIVE_ANALYSIS.md).
 
 ## Preserved v0.4.1 capabilities
 
@@ -78,6 +123,8 @@ See [README_DESKTOP.md](README_DESKTOP.md) for the desktop workflow and [README_
 
 Select two analyzed H5AD samples in Main Mapper, then open **Comparative Analysis** for a pairwise run. For group designs, load a manifest containing `sample_id`, `file_path`, and `group`; paired designs also require `pair_id`.
 
+For one to six independent Pre/Post comparisons, open **Comparative Analysis → Multi-Pair Pre/Post**, select a label plus Pre and Post H5AD for each row, keep one shared parameter set, and select **Run Multi-Pair Comparison**. Empty rows are ignored; partially filled rows are reported. Review **1 Balance change**, **2 Spatial organization**, and **3 Specimen reliability** as separate result layers. Select **How to read results** at any time to open the in-app classification rules and thresholds. The application does not collapse the three layers into an overall response or clinical score.
+
 Review the sample-scale banner and normalized topology figures before interpreting raw component-count changes. Pairwise regime results use a descriptive transition card; paired cohorts retain a count-and-row-percentage transition matrix. All deltas remain `Target - Reference`, and the original raw metric values remain exported.
 
 ```bash
@@ -90,9 +137,29 @@ spatialtx compare --manifest examples/comparative_manifest_example.csv --mode pa
 
 Required output files include sample metrics, delta metrics, group statistics, operational regime transitions, warnings, run manifest, parameter JSON, HTML/PDF reports, figures, and logs. Statistical significance alone is not evidence of biological or clinical significance.
 
-## v0.5-beta screenshots
+## v0.6-beta screenshots
 
-The screenshots were captured during final v0.5 development testing; the published source identifies itself as v0.5-beta.
+These screenshots were captured during final v0.6 development testing and may show the internal `v0.6-dev-HV-validation` build label. The published source identifies itself as `v0.6-beta`.
+
+Multi-Pair Pre/Post workspace with six independent pairs and the non-composite multiaxial overview:
+
+![SpatialTX Studio v0.6-beta Multi-Pair overview](docs/screenshots/spatialtx_studio_v0_6_beta_multi_pair_overview.png)
+
+Raw multiaxial change profile. C/S balance, spatial organization, raw H/V median Delta, and pair-pooled high-context fraction Delta remain separate:
+
+![SpatialTX Studio v0.6-beta multiaxial change profile](docs/screenshots/spatialtx_studio_v0_6_beta_multiaxial_change_profile.png)
+
+H/V observational context summary using pooled reference/target thresholds:
+
+![SpatialTX Studio v0.6-beta H/V context summary](docs/screenshots/spatialtx_studio_v0_6_beta_hv_context_summary.png)
+
+Example H/V expression-context joint-state map. H/V remain observational and do not alter C/S/R or Type A/B/C calls:
+
+![SpatialTX Studio v0.6-beta H/V joint-state map](docs/screenshots/spatialtx_studio_v0_6_beta_hv_joint_state_map.png)
+
+## Preserved v0.5-beta screenshots
+
+These retained screenshots document the preserved v0.5 workflows.
 
 Comparative Analysis workspace with category-specific metric changes:
 
@@ -135,7 +202,7 @@ python advanced_cli.py --module interaction --input sample.h5ad --output results
 python advanced_cli.py --module spatial_graph --input sample.h5ad --output results --graph-method radius --permutations 999 --seed 20260713
 ```
 
-See [RELEASE_NOTES_v0_5_beta.md](RELEASE_NOTES_v0_5_beta.md) for this release and [RELEASE_NOTES_v0_4_beta.md](RELEASE_NOTES_v0_4_beta.md) for the v0.4 beta stabilization history. Earlier public source release notes remain available in the repository.
+See [RELEASE_NOTES_v0_6_beta.md](RELEASE_NOTES_v0_6_beta.md) for this release, [RELEASE_NOTES_v0_6_dev_HV_validation.md](RELEASE_NOTES_v0_6_dev_HV_validation.md) and [RELEASE_NOTES_v0_6_dev.md](RELEASE_NOTES_v0_6_dev.md) for development lineage, and [RELEASE_NOTES_v0_5_5_beta.md](RELEASE_NOTES_v0_5_5_beta.md) for the preserved Multi-Pair foundation.
 
 ## CLI quick start
 

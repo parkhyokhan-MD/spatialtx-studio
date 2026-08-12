@@ -32,7 +32,13 @@ from spatialtx_desktop.comparative.metric_registry import (
 )
 from spatialtx_desktop.comparative.metrics import compute_delta_metrics, group_mean_deltas
 from spatialtx_desktop.comparative.models import ComparativeConfig
-from spatialtx_desktop.comparative.plotting import plot_regime_transitions
+from spatialtx_desktop.comparative.plotting import (
+    PRIMARY_SPATIAL_STATE_METRICS,
+    TOPOLOGY_COMPONENT_COMPLEXITY_METRICS,
+    plot_metric_change,
+    plot_regime_transitions,
+    plot_standardized_metric_change,
+)
 from spatialtx_desktop.comparative.reporting import rules_based_summary
 
 
@@ -184,6 +190,56 @@ class Box3NormalizationTests(unittest.TestCase):
         self.assertTrue(grouped.loc[grouped["metric"].eq("C_mean"), "standardized_delta"].notna().all())
         self.assertTrue(pairwise["standardized_delta"].isna().all())
         self.assertTrue(pairwise["standardized_delta_status"].eq("not_computed_for_pairwise").all())
+
+    def test_comparative_overview_uses_two_independent_raw_delta_panels(self) -> None:
+        changes = build_metric_change_table(compute_delta_metrics(_base_samples(), _matches()))
+        config = ComparativeConfig(mode="pairwise", reference="A", target="B", c_genes=["C1"], s_genes=["S1"])
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "comparative_metric_changes.png"
+            plot_metric_change(changes, output, config, effective_mode="pairwise")
+            metadata = json.loads(output.with_suffix(".png.metadata.json").read_text(encoding="utf-8"))
+        self.assertFalse(metadata["x_axes_shared"])
+        self.assertEqual(metadata["display_mode"], "raw_delta")
+        self.assertEqual(
+            metadata["panel_titles"],
+            {
+                "panel_a": "Primary spatial-state summary metrics",
+                "panel_b": "Topology / component complexity metrics",
+            },
+        )
+        self.assertEqual(metadata["panel_metric_names"]["panel_a"], list(PRIMARY_SPATIAL_STATE_METRICS))
+        self.assertEqual(
+            metadata["panel_metric_names"]["panel_b"],
+            list(TOPOLOGY_COMPONENT_COMPLEXITY_METRICS),
+        )
+        self.assertTrue(metadata["numeric_value_labels"])
+        self.assertIsNone(
+            plot_standardized_metric_change(
+                changes,
+                Path(tempfile.gettempdir()) / "pairwise_standardized_should_not_exist.png",
+                config,
+                effective_mode="pairwise",
+            )
+        )
+
+    def test_group_overview_can_export_pooled_scale_standardized_change(self) -> None:
+        samples = _base_samples()
+        target = samples["group"].eq("B")
+        for index, metric in enumerate(
+            (*PRIMARY_SPATIAL_STATE_METRICS, *TOPOLOGY_COMPONENT_COMPLEXITY_METRICS),
+            start=1,
+        ):
+            samples.loc[target, metric] = float(samples.loc[target, metric].iloc[0]) + index / 10
+        changes = build_metric_change_table(group_mean_deltas(samples, "A", "B"))
+        self.assertIn("standardized_delta", changes)
+        config = ComparativeConfig(mode="unpaired", reference="A", target="B", c_genes=["C1"], s_genes=["S1"])
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "comparative_metric_changes_standardized.png"
+            result = plot_standardized_metric_change(changes, output, config, effective_mode="unpaired")
+            self.assertEqual(result, output)
+            metadata = json.loads(output.with_suffix(".png.metadata.json").read_text(encoding="utf-8"))
+        self.assertEqual(metadata["display_mode"], "standardized_delta")
+        self.assertFalse(metadata["x_axes_shared"])
 
 
 class Box3HVTests(unittest.TestCase):

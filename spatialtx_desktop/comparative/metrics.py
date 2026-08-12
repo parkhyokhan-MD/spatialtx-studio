@@ -9,7 +9,12 @@ import pandas as pd
 
 from .. import __version__
 from ..graph.builder import GraphBuildConfig, build_spatial_graph
-from ..graph.context import ContextFieldConfig, add_context_field
+from ..graph.context import (
+    ContextFieldConfig,
+    add_context_field,
+    audit_context_program,
+    resolve_context_program,
+)
 from ..graph.metadata import json_safe
 from ..workflow import ScoringOptions, _read_h5ad, inspect_h5ad_memory, score_adata
 from .comparative_normalization import (
@@ -20,6 +25,18 @@ from .comparative_normalization import (
 )
 from .metric_registry import DELTA_METRIC_SPECS, GROUP_METRICS
 from .models import ComparativeConfig, NO_REGISTRATION_NOTICE, SampleRecord
+
+
+COMPARATIVE_METRIC_LAYER_SCHEMA = "v0.6-hv-validation-v1"
+CONTEXT_STATUS_VALUES = (
+    "available",
+    "insufficient_gene_coverage",
+    "no_matched_genes",
+    "unsupported_expression_scale",
+    "graph_unavailable",
+    "not_requested",
+    "calculation_error",
+)
 
 
 def _operational_regime_confidence(
@@ -45,9 +62,11 @@ def file_sha256(path: str | Path, chunk_size: int = 1024 * 1024) -> str:
 
 
 def _cache_payload(record: SampleRecord, config: ComparativeConfig, input_hash: str) -> dict:
+    h_program = resolve_context_program("H", config.h_genes)
+    v_program = resolve_context_program("V", config.v_genes)
     return {
         "application_version": __version__,
-        "comparative_metric_layer_schema": "box3-v1",
+        "comparative_metric_layer_schema": COMPARATIVE_METRIC_LAYER_SCHEMA,
         "input_hash": input_hash,
         "C_genes": config.c_genes,
         "S_genes": config.s_genes,
@@ -57,6 +76,7 @@ def _cache_payload(record: SampleRecord, config: ComparativeConfig, input_hash: 
         "H": {
             "enabled": config.enable_h_expr,
             "genes": config.h_genes,
+            "effective_genes": h_program["requested_genes"],
             "method": config.context_score_method,
             "smoothing": config.context_smoothing,
             "minimum_coverage": config.context_min_coverage,
@@ -64,6 +84,7 @@ def _cache_payload(record: SampleRecord, config: ComparativeConfig, input_hash: 
         "V": {
             "enabled": config.enable_v_expr,
             "genes": config.v_genes,
+            "effective_genes": v_program["requested_genes"],
             "method": config.context_score_method,
             "smoothing": config.context_smoothing,
             "minimum_coverage": config.context_min_coverage,
@@ -155,6 +176,31 @@ def _missing_context(label: str, warning: str) -> dict:
         f"{label}_transition_enrichment": np.nan,
         f"{label}_warnings": warning,
         f"{label}_interpretation": "Observational expression-derived context unavailable; core C/S results remain unchanged.",
+    }
+
+
+def _context_audit_metrics(
+    axis: str,
+    audit: dict,
+    status: str,
+    warning: str,
+    raw_normalization_method: str,
+) -> dict:
+    if status not in CONTEXT_STATUS_VALUES:
+        raise ValueError(f"Unsupported context status: {status}")
+    payload = dict(audit)
+    payload.update({
+        "axis": axis,
+        "context_available": status == "available",
+        "context_status": status,
+        "context_warning": warning,
+        "raw_normalization_method": raw_normalization_method,
+    })
+    return {
+        f"{axis}_context_available": status == "available",
+        f"{axis}_context_status": status,
+        f"{axis}_context_warning": warning,
+        f"{axis}_context_audit": json_safe(payload),
     }
 
 
@@ -256,30 +302,115 @@ def analyze_sample(
         ("V", config.enable_v_expr, config.v_genes),
     ):
         label = f"{field}_expr"
+        field_config = ContextFieldConfig(
+            field=field,
+            genes=genes,
+            score_method=config.context_score_method,
+            min_coverage=config.context_min_coverage,
+            allow_low_coverage=False,
+            smoothing=config.context_smoothing,
+        )
+        try:
+            audit = audit_context_program(adata, field_config)
+        except Exception as exc:
+            program = resolve_context_program(field, genes)
+            audit = {
+                **program,
+                "matched_genes": [],
+                "missing_genes": list(program["requested_genes"]),
+                "matched_gene_count": 0,
+                "coverage_fraction": 0.0,
+                "genes_expressed_above_min_spot_fraction": [],
+                "expressed_gene_count": 0,
+                "expressed_gene_fraction": 0.0,
+                "expression_scale_guess": "unknown",
+                "detection_source": "audit_calculation_error",
+                "raw_normalization_method": "unavailable_audit_calculation_error",
+                "minimum_coverage": float(config.context_min_coverage),
+            }
+            warning = f"{label} gene audit failed: {exc}"
+            metrics.update(_missing_context(label, warning))
+            metrics.update(raw_context_summary(field, None, transition_mask, "unavailable_audit_calculation_error"))
+            metrics.update(_context_audit_metrics(
+                field,
+                audit,
+                "calculation_error",
+                warning,
+                "unavailable_audit_calculation_error",
+            ))
+            context_warnings.append(warning)
+            continue
         if not enabled:
             metrics.update(_missing_context(label, "Not requested."))
             metrics.update(raw_context_summary(field, None, transition_mask, "not_requested"))
+            metrics.update(_context_audit_metrics(
+                field,
+                audit,
+                "not_requested",
+                "Not requested.",
+                "not_requested",
+            ))
+            continue
+        if int(audit.get("matched_gene_count", 0)) == 0:
+            warning = f"No requested genes were found for {label}."
+            metrics.update(_missing_context(label, warning))
+            metrics.update(raw_context_summary(field, None, transition_mask, "unavailable_no_matched_genes"))
+            metrics.update(_context_audit_metrics(
+                field,
+                audit,
+                "no_matched_genes",
+                warning,
+                "unavailable_no_matched_genes",
+            ))
+            context_warnings.append(warning)
+            continue
+        if float(audit.get("coverage_fraction", 0.0)) < float(config.context_min_coverage):
+            warning = (
+                f"low {label} gene coverage: "
+                f"{float(audit.get('coverage_fraction', 0.0)):.1%}"
+            )
+            metrics.update(_missing_context(label, warning))
+            metrics.update(raw_context_summary(field, None, transition_mask, "unavailable_insufficient_gene_coverage"))
+            metrics.update(_context_audit_metrics(
+                field,
+                audit,
+                "insufficient_gene_coverage",
+                warning,
+                "unavailable_insufficient_gene_coverage",
+            ))
+            context_warnings.append(warning)
             continue
         if graph_result is None:
             warning = f"{label} unavailable because a usable context graph was not available."
             metrics.update(_missing_context(label, warning))
             metrics.update(raw_context_summary(field, None, transition_mask, "unavailable_graph"))
+            metrics.update(_context_audit_metrics(
+                field,
+                audit,
+                "graph_unavailable",
+                warning,
+                "unavailable_graph",
+            ))
             context_warnings.append(warning)
             continue
         try:
             _coverage, meta = add_context_field(
                 adata,
-                ContextFieldConfig(
-                    field=field,
-                    genes=genes,
-                    score_method=config.context_score_method,
-                    min_coverage=config.context_min_coverage,
-                    allow_low_coverage=False,
-                    smoothing=config.context_smoothing,
-                ),
+                field_config,
                 graph_result.connectivities,
                 reference_fields={"C": C, "S": S, "R": R},
                 active_graph=graph_result.method,
+            )
+            for key in (
+                "gene_set_name", "requested_genes", "matched_genes", "missing_genes",
+                "requested_gene_count", "matched_gene_count", "coverage_fraction",
+                "genes_expressed_above_min_spot_fraction", "expressed_gene_fraction",
+                "expression_scale_guess", "detection_source",
+            ):
+                if key in meta:
+                    audit[key] = meta[key]
+            audit["expressed_gene_count"] = len(
+                audit.get("genes_expressed_above_min_spot_fraction", [])
             )
             values = _active_context_values(adata, meta)
             field_cache[label] = values
@@ -292,11 +423,39 @@ def analyze_sample(
             if raw_values is not None:
                 field_cache[f"{field}_expr_raw"] = np.asarray(raw_values, dtype=float)
             metrics.update(raw_context_summary(field, raw_values, transition_mask, raw_method))
+            if raw_values is None and str(raw_method).startswith("unavailable_expression_scale_"):
+                context_status = "unsupported_expression_scale"
+                warning = (
+                    f"{label} non-centered comparison unavailable for expression scale "
+                    f"{audit.get('expression_scale_guess', 'unknown')}."
+                )
+            elif raw_values is None:
+                context_status = "calculation_error"
+                warning = f"{label} non-centered context summary could not be calculated."
+            else:
+                context_status = "available"
+                warning = "; ".join(map(str, meta.get("warnings", [])))
+            metrics.update(_context_audit_metrics(
+                field,
+                audit,
+                context_status,
+                warning,
+                raw_method,
+            ))
             context_warnings.extend(map(str, meta.get("warnings", [])))
-        except ValueError as exc:
+            if context_status != "available":
+                context_warnings.append(warning)
+        except Exception as exc:
             warning = f"{label} skipped: {exc}"
             metrics.update(_missing_context(label, warning))
             metrics.update(raw_context_summary(field, None, transition_mask, "unavailable_context_error"))
+            metrics.update(_context_audit_metrics(
+                field,
+                audit,
+                "calculation_error",
+                warning,
+                "unavailable_context_error",
+            ))
             context_warnings.append(warning)
     combined_warnings = [str(base.get("QC_notes", "")).strip(), *context_warnings]
     metrics["warning_messages"] = "; ".join(item for item in combined_warnings if item)

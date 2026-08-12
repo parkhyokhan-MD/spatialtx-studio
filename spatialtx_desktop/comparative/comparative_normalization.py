@@ -283,8 +283,9 @@ def build_metric_change_table(delta_metrics: pd.DataFrame) -> pd.DataFrame:
     if table.empty:
         return pd.DataFrame(columns=[
             "metric_name", "display_name", "category", "unit", "reference_value", "target_value",
-            "raw_delta", "percent_change", "symmetric_percent_change", "normalization_denominator",
-            "normalization_status", "scale_sensitive", "observational_only", "interpretation_flag", "warning",
+            "raw_delta", "standardized_delta", "standardized_delta_status", "percent_change",
+            "symmetric_percent_change", "normalization_denominator", "normalization_status",
+            "scale_sensitive", "observational_only", "interpretation_flag", "warning",
         ])
     normalized_lookup = {
         (str(row["comparison_id"]), str(row["metric"])): _finite_number(row.get("delta"))
@@ -339,6 +340,8 @@ def build_metric_change_table(delta_metrics: pd.DataFrame) -> pd.DataFrame:
             "reference_value": reference,
             "target_value": target,
             "raw_delta": raw_delta,
+            "standardized_delta": _finite_number(row.get("standardized_delta")),
+            "standardized_delta_status": row.get("standardized_delta_status", "unavailable"),
             "normalized_delta": normalized_delta,
             "percent_change": ordinary,
             "symmetric_percent_change": symmetric,

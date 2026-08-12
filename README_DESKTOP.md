@@ -1,19 +1,37 @@
-# SpatialTX Studio Desktop v0.5-beta
+# SpatialTX Studio Desktop v0.6-beta
 
 > Public source beta. Exploratory research use only.
 
-v0.5-beta preserves the public v0.4-beta analysis behavior while adding a separate **Comparative Analysis** workflow. Import / Convert, Main Mapper, Advanced Analysis, graph tools, viewer, and existing output contracts remain available.
+v0.6-beta adds **Multiaxial Comparative Analysis + QC-aware paired interpretation** and an **H/V computational and audit validation layer**: effective genes, per-sample coverage/status, raw upper-tail summaries, within-pair pooled high-context fractions, and local high-context fractions. Import / Convert, Main Mapper, Single Pair Comparative Analysis, Advanced Analysis, graph tools, viewer, and existing output contracts remain available.
 
 The v0.4 line adds an optional **Spatial Graph & Neighborhood — Experimental** module under Advanced Analysis. This module builds sparse spatial graphs, reports graph QC, calculates optional `H_expr` and `V_expr` context fields, and runs exploratory neighborhood statistics without changing Main Mapper C/S scoring or Type A/B/C behavior. v0.4.1-beta adds a read-only in-app viewer for its generated figures, context QC, and result files.
 
 Windows desktop research prototype for the main `.h5ad` SpatialTX workflow.
 
 - Creator: **Hyokhan Park, MD**
-- Version: **v0.5-beta**
-- Release date: **2026-08-04**
+- Version: **v0.6-beta**
+- Release date: **2026-08-12**
 - Edition: **Public source beta**
 
-The screenshots below were captured during final v0.5 development testing; the published source identifies itself as v0.5-beta.
+The v0.6 screenshots were captured during final development testing and may show the internal `v0.6-dev-HV-validation` label. The published source identifies itself as `v0.6-beta`.
+
+Multi-Pair Pre/Post workspace:
+
+![SpatialTX Studio v0.6-beta Multi-Pair overview](docs/screenshots/spatialtx_studio_v0_6_beta_multi_pair_overview.png)
+
+Multiaxial change profile with separate raw-value panels and no composite response score:
+
+![SpatialTX Studio v0.6-beta multiaxial change profile](docs/screenshots/spatialtx_studio_v0_6_beta_multiaxial_change_profile.png)
+
+H/V observational context summary:
+
+![SpatialTX Studio v0.6-beta H/V context summary](docs/screenshots/spatialtx_studio_v0_6_beta_hv_context_summary.png)
+
+Example H/V expression-context joint-state map:
+
+![SpatialTX Studio v0.6-beta H/V joint-state map](docs/screenshots/spatialtx_studio_v0_6_beta_hv_joint_state_map.png)
+
+The screenshots below document the preserved v0.5 workflows.
 
 Comparative Analysis metric changes:
 
@@ -82,6 +100,32 @@ The two standard-folder importer sections provide **Select input folder**, **Sel
 
 Seurat RDS, h5Seurat, parquet, and generic CSV import are not supported.
 
+## Comparative Analysis: Multi-Pair Pre/Post
+
+The existing **Single Pair / Existing** comparative workflow remains available. For multiple independent comparisons, open **Comparative Analysis → Multi-Pair Pre/Post**.
+
+1. Configure one to six rows with a pair label, Pre H5AD, and Post H5AD.
+2. Set site metadata to `same_site`, `different_site`, or `unknown_site`. A different site produces a warning but does not exclude the pair.
+3. Leave unused rows completely empty. A partially filled row produces a clear warning.
+4. Confirm the shared C/S programs and thresholds in Main Mapper. Multi-Pair never changes parameters between pairs.
+5. Enable H and/or V only when the optional observational context is desired. Existing SpatialTX H/V gene programs are reused; missing context genes do not fail the core comparison.
+6. Choose an output root and select **Run Multi-Pair Comparison**.
+7. Review **1 Balance change**, **2 Spatial organization**, **H/V Context**, **3 Specimen reliability**, and **Multiaxial Overview** without collapsing them into one score.
+8. Open **Pair interpretation** for `Minimal/Moderate/Large` change classes, regime/structure preservation, `GOOD/CAUTION/LOW` interpretation confidence, site warning, and pair-specific safety messages.
+9. Select **How to read results** (or open **Rules & interpretation**) for the exact layer definitions, change-class thresholds, Good/Caution/Low rules, Delta direction, C/S/R summary basis, H/V limits, and interpretation limits used by this version.
+
+Each pair retains Pre, Post, Delta (`Post - Pre`), safe percent-change status, and a metric-aware direction symbol. Layer 1 reports C, S, and R separately. Primary C/S/R rows use existing field medians because within-sample field means may be approximately zero after gene-wise standardization; mean values remain separate compatibility columns. Layer 2 reports coordinate-dependent spatial organization metrics. Layer 3 reports `Good`, `Caution`, or `Low` specimen reliability with auditable reasons based primarily on technical quality, tissue sampling, occupancy, gene coverage, and geometry proxies. C/S distribution is labeled as a secondary `composition proxy` and cannot by itself produce `Low`.
+
+One failed pair does not terminate the others. Numerical results are not suppressed when specimen reliability is Low; they are flagged because sampling or composition differences may substantially influence the observed change. Reliability qualifies interpretation but is not itself a biological outcome. The three layers are not combined into one score and do not establish treatment response, clinical benefit, efficacy, responder status, or drug sensitivity.
+
+The **Specimen reliability** tab displays actual spot-count, detected-gene, observed-count, spatial-extent, tissue-component, and occupancy comparisons where available. Technical mismatch, sampling mismatch, and `composition proxy` context are separated. If explicit patient/sample-like filename IDs disagree, the application asks the user to confirm the pair and retains a visible `Possible pair-ID mismatch` warning without automatically blocking the run.
+
+The run folder retains all v0.6 files and adds `context_gene_audit.csv`. `context_changes.csv` and `multiaxial_pair_summary.csv` now include raw H/V median, q90, pair-pooled high-context fraction, local high-context fraction, gene coverage, and explicit status. Raw Pre, Post, and Delta values are preserved. In the multiaxial figure, the H/V area uses two independently scaled tiers: raw-median Delta and pair-pooled high-context fraction Delta. This keeps focal upper-tail change visible when a whole-tissue median remains zero; no composite response score is computed.
+
+For each axis and pair, the common high-context threshold is `q90(concat(Pre raw context, Post raw context))`. Pre and Post high fractions use that same threshold. A local high-context spot is above the shared threshold and has at least one graph neighbor that is also above it. These calculations are repeated independently for each pair; thresholds are not shared across patients.
+
+`context_gene_audit.csv` separates the legacy within-sample centered-context q80 diagnostic from the within-pair raw-context q90 summary. The columns `single_sample_context_warning` and `pair_pooled_context_warning` have explicit provenance, and their corresponding high fractions are exported separately. A legacy single-sample warning such as `100.0%` therefore does not mean that the pair-pooled high-context fraction is 100%.
+
 ## Workflow
 
 1. Choose a folder and scan recursively for `.h5ad` files.
@@ -113,7 +157,7 @@ The Comparative Analysis tab reuses the current C/S genes, thresholds, normaliza
 
 The default comparison unit is the sample-level summary. Delta is defined as `Target - Reference`. Spatial maps are displayed side by side with a shared `R(x)` color scale, but coordinates are not assumed to correspond and spots are never subtracted directly. The report always states: “Sample-level comparative summary; no direct spatial registration performed.”
 
-Comparative figures are now grouped by compatible metric category: program scores, transition, graph, raw topology, normalized topology, sample scale, relative change, standardized heatmap, regime, R maps, and H/V observation context. The Metric changes table retains reference and target values and raw deltas while adding normalized counterparts, symmetric percent change, scale-sensitivity flags, and warnings. Raw topology counts are never removed, but they should be interpreted only after checking valid spot count, tissue extent, tissue graph-component count, and normalized component density.
+Comparative figures are now grouped by compatible metric category: program scores, transition, graph, raw topology, normalized topology, sample scale, relative change, standardized heatmap, regime, R maps, and H/V observation context. The default raw-Delta overview itself is split into **Primary spatial-state summary metrics** and **Topology / component complexity metrics** panels with independent x-axes and a numeric label on every bar. This prevents component-density changes from visually flattening fraction/score changes. Eligible group analyses also receive a separate pooled-sample-scale standardized overview; pairwise z-scores are not invented. The Metric changes table retains reference and target values and raw deltas while adding standardized Delta where valid, normalized counterparts, symmetric percent change, scale-sensitivity flags, and warnings. Raw topology counts are never removed, but they should be interpreted only after checking valid spot count, tissue extent, tissue graph-component count, and normalized component density.
 
 Group reports include sample count, mean, median, standard deviation, interquartile range, effect size, seeded bootstrap 95% confidence interval, test result, and Benjamini-Hochberg-adjusted p-value where calculable. Wilcoxon signed-rank is the default for matched pairs; Mann-Whitney U is the default for unpaired groups. Optional paired or Welch t tests must be selected explicitly. Small groups are warned, and statistical significance is not interpreted as biological significance.
 

@@ -84,6 +84,25 @@ def _default_genes(field: str) -> tuple[str, list[str]]:
     raise ValueError("field must be 'H' or 'V'")
 
 
+def resolve_context_program(
+    field: str,
+    genes: Iterable[str] | None = None,
+    gene_set_name: str | None = None,
+) -> dict:
+    """Resolve the effective existing H/V program without changing its definition."""
+    normalized_field = str(field).upper()
+    default_name, default_genes = _default_genes(normalized_field)
+    source = "default" if genes is None else "user_supplied"
+    requested = parse_gene_text(default_genes if genes is None else genes)
+    return {
+        "axis": normalized_field,
+        "gene_set_name": gene_set_name or default_name,
+        "source": source,
+        "requested_genes": requested,
+        "requested_gene_count": len(requested),
+    }
+
+
 def _context_label(field: str) -> str:
     return "H_expr" if field == "H" else "V_expr"
 
@@ -141,6 +160,56 @@ def _detection_matrix(adata, indices: list[int], matched: list[str], fallback: n
     return np.asarray(fallback, dtype=float), "adata.X", scale or _expression_scale_guess(adata.X)
 
 
+def audit_context_program(adata, config: ContextFieldConfig) -> dict:
+    """Return sample-level H/V gene coverage and expression-source provenance."""
+    program = resolve_context_program(config.field, config.genes, config.gene_set_name)
+    requested = list(program["requested_genes"])
+    indices, matched, missing = _gene_indices(adata, requested)
+    coverage = len(matched) / len(requested) if requested else 0.0
+    detection_source = "unavailable_no_matched_genes"
+    expression_scale_guess = "unknown"
+    expressed_genes: list[str] = []
+    expressed_fraction = 0.0
+    if indices:
+        matrix = np.asarray(_dense(adata.X[:, indices]), dtype=float)
+        detection_matrix, detection_source, expression_scale_guess = _detection_matrix(
+            adata,
+            indices,
+            matched,
+            matrix,
+        )
+        positive_fraction = np.mean(
+            np.isfinite(detection_matrix) & (detection_matrix > 0),
+            axis=0,
+        )
+        expressed = positive_fraction >= float(config.min_spot_fraction)
+        expressed_genes = [gene for gene, keep in zip(matched, expressed) if keep]
+        expressed_fraction = float(np.mean(expressed)) if len(expressed) else 0.0
+    if expression_scale_guess == "raw_counts":
+        raw_method = "log1p_counts_then_program_mean"
+    elif expression_scale_guess == "log1p_normalized":
+        raw_method = "existing_nonnegative_expression_then_program_mean"
+    elif not matched:
+        raw_method = "unavailable_no_matched_genes"
+    else:
+        raw_method = f"unavailable_expression_scale_{expression_scale_guess or 'unknown'}"
+    return {
+        **program,
+        "matched_genes": matched,
+        "missing_genes": missing,
+        "matched_gene_count": len(matched),
+        "coverage_fraction": coverage,
+        "genes_expressed_above_min_spot_fraction": expressed_genes,
+        "expressed_gene_count": len(expressed_genes),
+        "expressed_gene_fraction": expressed_fraction,
+        "expression_scale_guess": expression_scale_guess,
+        "detection_source": detection_source,
+        "raw_normalization_method": raw_method,
+        "minimum_coverage": float(config.min_coverage),
+        "minimum_spot_fraction": float(config.min_spot_fraction),
+    }
+
+
 def _leave_one_gene_out(matrix: np.ndarray, matched: list[str], method: str, full_field: np.ndarray) -> list[dict]:
     rows: list[dict] = []
     for index, gene in enumerate(matched):
@@ -181,9 +250,9 @@ def add_context_field(
 ) -> tuple[pd.DataFrame, dict]:
     """Add H_expr or V_expr to adata.obs as descriptive context fields only."""
     field = config.field.upper()
-    default_name, default_genes = _default_genes(field)
-    requested = parse_gene_text(config.genes if config.genes is not None else default_genes)
-    gene_set_name = config.gene_set_name or default_name
+    program = resolve_context_program(field, config.genes, config.gene_set_name)
+    requested = list(program["requested_genes"])
+    gene_set_name = str(program["gene_set_name"])
     label = _context_label(field)
     if not requested:
         raise ValueError(f"{label} gene set is empty.")

@@ -1,6 +1,6 @@
 # Comparative Spatial Transition Analysis
 
-SpatialTX Studio Desktop v0.5-beta compares established SpatialTX sample summaries across two samples or groups. It is an exploratory research workflow and is not intended for diagnosis, treatment selection, response prediction, or clinical decision-making.
+SpatialTX Studio Desktop v0.6-beta compares established SpatialTX sample summaries across two samples, groups, or one to six independent Pre/Post pairs. It includes an H/V computational and audit validation layer while preserving C/S + FRAME2.6 as the primary framework. It is an exploratory research workflow and is not intended for diagnosis, treatment selection, response prediction, or clinical decision-making.
 
 ## Purpose and analysis boundary
 
@@ -8,7 +8,136 @@ The workflow asks what changed in C/S balance, spatial gradient, localized inter
 
 No direct spatial registration is performed. Coordinates in different H5AD files are not assumed to correspond, and there is no spot-wise subtraction. Side-by-side maps are visualization only.
 
-Comparative Analysis does not contain candidate discovery, ligand-receptor analysis, QUBO optimization, AI interpretation, literature search, or multi-axis modeling.
+Comparative Analysis does not contain candidate discovery, ligand-receptor analysis, QUBO optimization, AI/ML diagnosis, or literature search. Its H/V values reuse existing observational context definitions and are not a new classifier or composite model.
+
+## Multi-Pair Pre/Post workflow
+
+The existing **Single Pair / Existing** workspace remains unchanged. **Multi-Pair Pre/Post** adds one to six independent labeled pairs. Every pair uses the same C/S programs, quantile thresholds, scoring options, and graph settings. Empty rows are ignored, partially filled rows are reported, and Pre and Post must be different H5AD inputs.
+
+For each successful pair, the runner reuses the canonical pairwise sample analyzer and exports separate Pre, Post, Delta (`Post - Pre`), safe percent change, and direction values. C, S, and R are always retained separately. The primary pair-level C/S/R state rows use the existing field medians because gene-wise standardization can make within-sample field means approximately zero by construction; the existing means remain available in separate compatibility columns. Percent change for these signed centered scores is marked `NA/not_meaningful`. Spatial outputs include localized interface-like fraction, diffuse fraction, transition burden, regime and pattern transition, adjacency, fragmentation, component ratios, and normalized component density where available.
+
+### Three separate result layers
+
+Multi-Pair results are presented in three layers that must not be collapsed into a single response, quality, or clinical score:
+
+1. **Balance change** — C, S, and `R=C-S`, including exact Pre, Post, Delta, and direction values.
+2. **Spatial organization change** — coordinate-dependent interface, diffuse, adjacency, fragmentation, transition-burden, and compatible topology measurements.
+3. **Specimen reliability** — comparability plus technical, sampling, coverage, occupancy, and geometry QC that qualifies interpretation of Layers 1 and 2.
+
+Specimen reliability is not a biological outcome or a calibrated probability that an interpretation is true. Type A/B/C and pattern transitions remain derived exploratory descriptors; they are not reliability, treatment-response, or efficacy classifications. The UI exposes the layers as **1 Balance change**, **2 Spatial organization**, and **3 Specimen reliability**, with a non-composite three-layer overview and in-app interpretation rules.
+
+### Rule-based pair interpretation
+
+The **Pair interpretation** panel keeps the three layers separate while providing concise descriptive labels. `PairInterpretationConfig` centralizes all thresholds:
+
+| Change class input | Moderate | Large |
+|---|---:|---:|
+| max absolute Delta across C, S, R | 0.25 | 0.75 |
+| absolute interface-fraction Delta | 0.03 | 0.10 |
+| absolute diffuse-fraction Delta | 0.05 | 0.15 |
+| absolute transition-burden Delta | 0.10 | 0.30 |
+| absolute adjacency-fraction Delta | 0.05 | 0.15 |
+| absolute fragmentation Delta | 0.10 | 0.30 |
+
+Balance change is `Large` when the largest absolute C/S/R Delta reaches the Large threshold, `Moderate` when it reaches only the Moderate threshold, and `Minimal` otherwise. Spatial organization change is `Large` when any configured spatial metric reaches its Large threshold, `Moderate` when none is Large but at least one reaches its Moderate threshold, and `Minimal` otherwise. The exact triggering measurements are exported next to every label.
+
+`regime_preserved=yes` means only that the broad candidate label is unchanged. `structure_preserved` combines regime preservation and spatial-change class: an unchanged regime with Minimal spatial change is `yes`, but Low comparability downgrades it to `probably`; Moderate spatial change is `probably`; a changed regime or Large spatial change is `no`. This does not imply absence of biological change.
+
+The high-level `pair_status_flag` aligns structure, balance class, and reliability, for example `Stable structure / low-confidence pair; balance change: Moderate`. It is an exploratory reading aid, not a response, efficacy, prediction, or clinical-confidence score. A Low pair displays the explicit caution that specimen selection, sampling, or technical differences may substantially influence the observed comparison. An unchanged regime with a quantitative balance shift and Minimal spatial change displays `balance shift with preserved structure` plus a regime-preservation note.
+
+The runner isolates failures. An unreadable, corrupted, non-spatial, gene-inadequate, or otherwise failed pair is recorded as `ERROR`; it does not terminate the remaining valid pairs.
+
+### Parallel H/V context and QC-aware interpretation
+
+v0.6 optionally adds H and V beside the preserved C/S and spatial results. H is the existing hypoxia-associated expression-context axis. V is the existing endothelial/angiogenic expression proxy; it is not direct perfusion, vessel density, measured vascularity, or functional blood supply. Non-centered H/V program medians are used for Pre/Post comparison because within-sample centered means are non-informative for cross-sample direction.
+
+H/V are computed after the core result and never alter C, S, R, gradients, interface/diffuse masks, transition burden, or Type A/B/C labels. If either context program cannot be computed, its Pre/Post/Delta fields remain `NaN` and the C/S/FRAME2.6 pair continues normally. No arbitrary replacement genes are substituted.
+
+The effective existing program is resolved before each sample audit. When the configuration value is `None`, H uses `CA9, VEGFA, SLC2A1, LDHA, ENO1, PGK1, ALDOA, BNIP3, NDRG1, ADM, EGLN3, P4HA1`; V uses `PECAM1, VWF, KDR, FLT1, ESAM, ENG, CDH5, RAMP2, EMCN, CLDN5, ANGPT2, PLVAP`. These are existing SpatialTX defaults, not new definitions.
+
+For supported raw-count input, the non-centered spot value is the mean of `log1p` counts across matched genes. For supported nonnegative log1p input, the stored values are averaged across matched genes. Sample raw mean, median, q75, q90, transition enrichment, and coefficient of variation are retained. Low coverage, no matched genes, unsupported expression scale, unavailable graph, disabled context, and calculation failure remain `NaN` with explicit status rather than being converted to zero.
+
+For each axis within each pair only:
+
+1. Concatenate finite Pre and Post non-centered spot values.
+2. Set the common threshold to the pooled q90.
+3. Calculate each sample's high-context fraction as the fraction of spots at or above that common threshold.
+4. Mark a local high-context spot when it is above the common threshold and at least one spatial-graph neighbor is also above it; export the fraction of all spots meeting both conditions.
+
+No threshold is pooled across different pairs. Raw medians remain backward-compatible H/V aliases, but a stable zero median does not override nonzero q90, high-context fraction, or local high-context fraction.
+
+The rule-based interpretation displays `Comparability: GOOD/CAUTION/LOW` and `Interpretation confidence: GOOD/CAUTION/LOW` next to the regime and metric changes. A Low pair remains visible but receives an explicit warning that observed differences should not be attributed directly to treatment without independent validation. This confidence label is an interpretation gate derived from specimen QC, not a probability of biological truth.
+
+### Anatomical-site metadata
+
+Each Multi-Pair row accepts `same_site`, `different_site`, or `unknown_site`. A `different_site` pair receives `SITE-SHIFT WARNING`: site-specific tissue composition or microenvironmental variation may contribute to observed differences. The warning does not automatically exclude the pair and does not change its comparability classification or FRAME2.6 result. Unknown metadata remains explicitly `unknown_site`.
+
+### Specimen Comparability Gate
+
+Comparability is evaluated before pair-level interpretation and is kept separate from the observed spatial change. The output is `Good`, `Caution`, or `Low`, with every contributing measurement and reason exported.
+
+The compact reliability table reports the actual spot-count ratio, detected-gene ratio, observed median-count ratio, spatial-extent ratio, tissue-component count difference/ratio, and tissue-occupancy difference where available. Technical reasons are separated from sampling/geometry reasons and secondary `composition proxy` reasons. Without direct histologic annotation the software uses cautious proxy wording and does not claim a definitive tumor/stroma mismatch.
+
+Primary checks are:
+
+- spatial-coordinate validity;
+- C-side and S-side required-gene coverage;
+- spot-count fold difference;
+- feature-count fold difference;
+- median detected genes per spot;
+- median observed matrix total per spot, with a preprocessing-compatibility warning;
+- in-tissue occupancy difference when available;
+- an existing low-quality-spot flag difference when available;
+- coordinate bounding-box area and tissue-component fold differences when analysis succeeds.
+
+C/S dominance fractions may be included only as explicitly labeled secondary `composition proxy` context. Because C/S may legitimately change after treatment, this proxy cannot by itself produce `Low`.
+
+All thresholds reside in `ComparabilityConfig` in `spatialtx_desktop/comparative/multi_pair.py`. A primary `low` reason produces `Low`; two or more primary `caution` reasons also produce `Low`; one primary caution or a secondary composition-proxy warning produces `Caution`; otherwise the pair is `Good`. Missing optional QC fields are exported as `not_available` and do not fail the entire batch.
+
+Default thresholds are:
+
+| QC comparison | Caution | Low |
+|---|---:|---:|
+| spot-count fold difference | 1.50 | 2.50 |
+| feature-count fold difference | 1.25 | 1.75 |
+| detected-genes fold difference | 1.50 | 2.50 |
+| observed library-size fold difference | 2.00 | 4.00 |
+| in-tissue fraction absolute difference | 0.15 | 0.30 |
+| existing low-quality fraction absolute difference | 0.15 | 0.30 |
+| valid-analysis-spot fraction absolute difference | 0.10 | 0.25 |
+| spatial extent-area fold difference | 2.00 | 4.00 |
+| tissue-component fold difference | 2.00 | 4.00 |
+| minimum C/S gene coverage | below 0.80 | below 0.50 |
+| secondary C/S composition-proxy absolute difference | 0.25 | 0.45 |
+
+The last row remains secondary even at its `low` threshold. Comparability is not a calibrated probability and does not validate a biological interpretation.
+
+### Pair-ID validation
+
+Before a GUI run, explicit patient/sample-like identifiers in Pre/Post filenames are compared conservatively. A mismatch produces `Possible pair-ID mismatch` and asks the user to confirm that the comparison is intended. The warning is exported but does not automatically stop the run or change the comparability class. GEO/SRA accessions alone are not treated as patient identities, so files such as different GSM accessions sharing `sample_43` can still match on the explicit sample identifier.
+
+### Multi-Pair exports
+
+Each run creates `comparative_multi_pair/<timestamp_or_tag>/` containing:
+
+- `pair_results.csv`: one row per requested pair with exact Pre/Post/Delta/percent/direction values, regime/pattern transitions, comparability, status, and error;
+- `balance_changes.csv`: Layer 1 C/S/R results, including compatibility mean columns, without spatial-organization or reliability fields;
+- `spatial_organization_changes.csv`: Layer 2 interface, diffuse, adjacency, fragmentation, topology, and derived pattern-transition results;
+- `specimen_reliability.csv`: Layer 3 pair-level Good/Caution/Low classification, reason and warning counts, unavailable-QC count, and interpretation note;
+- `pair_interpretation_summary.csv`: pair-level balance/spatial classes, regime and structure preservation, reliability-qualified status, interpretive flag, safety messages, and exact threshold basis;
+- `comparability_details.csv`: compact actual QC ratios/differences with technical, sampling, composition-proxy, and pair-ID reasons separated;
+- `overview_interpretation.csv`: requested three-layer overview columns with numeric Deltas and interpretive flags;
+- `comparability_qc.csv`: long-form technical, sampling, geometry, and secondary composition-proxy measurements with availability, severity, and reasons;
+- `comparative_overview.csv`: aligned but non-composite three-layer summary plus exact deltas and directional symbols;
+- `context_changes.csv`: optional H/V raw Pre, Post, Delta, and direction fields;
+- `context_gene_audit.csv`: one row per sample per axis with effective genes, matched/missing/expressed genes, coverage, expression scale/source, raw method, availability status, and separately sourced single-sample centered-context q80 versus pair-pooled raw-context q90 warnings and high fractions;
+- `multiaxial_pair_summary.csv`: raw C/S balance, interface, diffuse, burden, H/V, regime, comparability, site, and interpretation fields for every requested pair;
+- `comparative_qc_summary.csv`: compact Good/Caution/Low result, up to three primary mismatch summaries, site warning, and interpretation confidence;
+- `cohort_summary.csv`: descriptive counts only;
+- `run_metadata.json`: version, immutable shared settings, thresholds, file paths, SHA-256 values where readable, pair labels, timestamp, metric registry, and safety flags;
+- `figures/multi_pair_comparative_overview.png`, `figures/multiaxial_pair_overview.png`, and successful pair-level metric panels. The multiaxial figure uses independent raw-Delta panels and does not normalize or overwrite exported scientific values. Its H/V column is split into separately scaled raw-median Delta and pair-pooled high-context fraction Delta tiers; the latter uses each pair's shared raw-context q90 threshold.
+
+Direction symbols use metric-specific tolerances; exact numeric values are never replaced. Ordinary percent change is `NA` when the Pre value is zero or near zero.
 
 ## Input requirements
 
@@ -131,7 +260,9 @@ H/V are computed after the core C/S result. They do not alter `R(x)`, gradients,
 6. Validate inputs, review all validation rows, then run.
 7. Review sample metrics, deltas, operational regimes, warnings, fresh figures, and the timestamped output folder.
 
-The Metric changes view shows reference, target, raw delta, normalized counterpart where defined, symmetric percent change, scale sensitivity, observational status, and warnings. A visible banner directs the user to normalized topology metrics when sample scale differs. The Figures selector is grouped into overview, program, transition, graph, raw topology, normalized topology, sample scale, relative change, standardized heatmap, regime, side-by-side map, and H/V observation layers.
+The Metric changes view shows reference, target, raw delta, pooled-scale standardized delta where valid, normalized counterpart where defined, symmetric percent change, scale sensitivity, observational status, and warnings. A visible banner directs the user to normalized topology metrics when sample scale differs. The default `comparative_metric_changes.png` raw-Delta overview has two non-shared x-axes: Panel A, **Primary spatial-state summary metrics**, contains localized interface-like fraction, diffuse transition fraction, transition burden score, R zero-crossing fraction, largest diffuse-component ratio, and small-component fraction; Panel B, **Topology / component complexity metrics**, contains the supported component-density measures. Every displayed bar has a numeric value label. The existing per-tissue denominator is tissue graph-component count, not physical tissue area, and is labeled accordingly.
+
+For group analyses with a finite pooled sample scale, `comparative_metric_changes_standardized.png` provides the same two-panel organization using standardized Delta. It is an optional secondary view. Raw Delta remains the default, and pairwise standardized change is not computed from only two observations. The Figures selector also retains program, transition, graph, raw topology, normalized topology, sample scale, relative change, standardized heatmap, regime, side-by-side map, and H/V observation layers.
 
 The standardized heatmap groups columns by the registry category and inserts category separators. Its colors are metric-wise within-run z-scores for visualization only; the transform and deterministic metric order are written to the JSON sidecar, and raw CSV values are not replaced.
 
@@ -208,6 +339,6 @@ The selected output root also contains `.spatialtx_comparative_cache/`. Cache en
 
 Keep input H5AD files immutable, preserve manifests, fix the seed, record the exact C/S programs and thresholds, and archive the complete timestamped run directory. Compare input SHA-256 values and SpatialTX version before interpreting reruns. Use the same reference/target direction and statistical design. Review warnings and failures before using any aggregate result.
 
-## v0.5 completion status
+## v0.5.5 completion status
 
-Release validation covers pairwise, paired, unpaired, manifest, export, H/V isolation, deterministic, mixed-failure, and unchanged-v0.4 regression behavior. Public-data examples remain demonstrations rather than biological validation.
+Release validation covers one- and six-pair Multi-Pair runs, the six-pair limit and seven-pair rejection, non-contiguous populated rows, pair-isolated failure, deliberate specimen mismatch, comparability reasons, exports, metadata, direction tolerances, pairwise, paired, unpaired, manifest, H/V isolation, deterministic behavior, and unchanged existing workflows. Public-data examples remain demonstrations rather than biological validation.

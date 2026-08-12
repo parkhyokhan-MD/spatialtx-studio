@@ -1,6 +1,6 @@
 # GEO Flat Visium Directory Import
 
-SpatialTX Studio v0.5-beta can convert flattened standard Visium files downloaded from GEO or similar repositories when several samples are stored in one user-selected directory. AnnData `.h5ad` remains the canonical internal analysis format.
+SpatialTX Studio v0.6-beta can convert flattened standard Visium files downloaded from GEO or similar repositories when several samples are stored in one user-selected directory. AnnData `.h5ad` remains the canonical internal analysis format.
 
 The GSE316402 folder is only a development example. SpatialTX Studio does not depend on this dataset name or location.
 

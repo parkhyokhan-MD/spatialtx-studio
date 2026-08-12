@@ -2,11 +2,11 @@ cff-version: 1.2.0
 message: "If you use SpatialTX Studio Desktop in research, please cite this software release."
 type: software
 title: "SpatialTX Studio Desktop"
-version: "0.5-beta"
-date-released: "2026-08-04"
+version: "0.6-beta"
+date-released: "2026-08-12"
 authors:
   - family-names: Park
     given-names: Hyokhan
     suffix: MD
 license: Apache-2.0
-abstract: "A research-use-only public source release for C/S transition mapping and sample-level comparative spatial transcriptomics analysis."
+abstract: "A research-use-only public source beta for C/S transition mapping, multiaxial paired comparison, QC-aware interpretation, and H/V computational audit validation."

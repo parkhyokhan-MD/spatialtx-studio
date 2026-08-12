@@ -6,8 +6,10 @@ from pathlib import Path
 from unittest.mock import patch
 
 import numpy as np
+from packaging.version import Version
 
 from spatialtx_desktop import __version__
+from spatialtx_desktop.version import __package_version__
 from spatialtx_desktop import advanced_analysis as aa
 from spatialtx_desktop.advanced_analysis_ui import AdvancedAnalysisPanel
 from spatialtx_desktop.workflow import DEFAULT_C_GENES, DEFAULT_S_GENES, score_h5ad
@@ -27,7 +29,8 @@ class FakeAdata:
 
 class AdvancedAnalysisTests(unittest.TestCase):
     def test_version_and_v01_defaults_are_preserved(self) -> None:
-        self.assertEqual(__version__, "0.5-beta")
+        self.assertEqual(__version__, "0.6-beta")
+        self.assertEqual(str(Version(__package_version__)), "0.6b0")
         self.assertEqual(DEFAULT_C_GENES, ["CD8A", "CD8B", "NKG7", "PRF1", "GZMB", "IFNG"])
         self.assertEqual(DEFAULT_S_GENES, ["COL1A1", "COL1A2", "COL3A1", "FN1", "LUM", "DCN"])
         signature = inspect.signature(score_h5ad)
