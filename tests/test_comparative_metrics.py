@@ -11,13 +11,15 @@ from spatialtx_desktop.comparative.metrics import compute_delta_metrics, regime_
 class ComparativeMetricTests(unittest.TestCase):
     def test_delta_is_target_minus_reference_for_known_values(self) -> None:
         samples = pd.DataFrame([
-            {"sample_id": "A", "C_mean": 1.0, "S_mean": 4.0, "R_mean": -3.0, "R_std": 1.0,
+            {"sample_id": "A", "C_mean": 1.0, "S_mean": 4.0, "R_mean": -3.0,
+             "C_median": .2, "S_median": .8, "R_median": -.6, "R_std": 1.0,
              "gradient_mean": 0.5, "gradient_q90": 1.0, "localized_interface_fraction": .2,
              "diffuse_fraction": .1, "transition_burden_score": .15, "adj_same_fraction": .6,
              "adj_zero_fraction": .2, "adj_opposite_fraction": .2, "R_crossing_fraction": .1,
              "interface_fragmentation_index": .2, "n_diffuse_components": 2, "small_component_fraction": .1,
              "largest_diffuse_component_ratio": .8, "H_expr_mean": .2, "V_expr_mean": .3},
-            {"sample_id": "B", "C_mean": 3.0, "S_mean": 2.0, "R_mean": 1.0, "R_std": 2.5,
+            {"sample_id": "B", "C_mean": 3.0, "S_mean": 2.0, "R_mean": 1.0,
+             "C_median": .7, "S_median": .3, "R_median": .4, "R_std": 2.5,
              "gradient_mean": 1.5, "gradient_q90": 3.0, "localized_interface_fraction": .1,
              "diffuse_fraction": .4, "transition_burden_score": .45, "adj_same_fraction": .3,
              "adj_zero_fraction": .4, "adj_opposite_fraction": .3, "R_crossing_fraction": .4,
@@ -31,6 +33,9 @@ class ComparativeMetricTests(unittest.TestCase):
         self.assertEqual(delta.loc["delta_C", "delta"], 2.0)
         self.assertEqual(delta.loc["delta_S", "delta"], -2.0)
         self.assertEqual(delta.loc["delta_R", "delta"], 4.0)
+        self.assertAlmostEqual(delta.loc["delta_C_median", "delta"], .5)
+        self.assertAlmostEqual(delta.loc["delta_S_median", "delta"], -.5)
+        self.assertAlmostEqual(delta.loc["delta_R_median", "delta"], 1.0)
         self.assertAlmostEqual(delta.loc["delta_transition_burden_score", "delta"], .30)
         self.assertAlmostEqual(delta.loc["delta_H_expr", "delta"], .5)
 

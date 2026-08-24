@@ -52,6 +52,9 @@ def _base_samples() -> pd.DataFrame:
             "C_mean": 1.0 if sample_id == "reference" else 1.5,
             "S_mean": 2.0,
             "R_mean": -1.0 if sample_id == "reference" else -0.5,
+            "C_median": 0.2 if sample_id == "reference" else 0.7,
+            "S_median": 0.4 if sample_id == "reference" else 0.1,
+            "R_median": -0.2 if sample_id == "reference" else 0.6,
             "R_std": 0.5,
             "gradient_mean": 0.2,
             "gradient_q90": 0.8,
@@ -178,7 +181,14 @@ class Box3NormalizationTests(unittest.TestCase):
     def test_registry_is_central_ordered_and_marks_deprecated_hv_means(self) -> None:
         names = [definition.internal_name for definition in METRIC_REGISTRY]
         self.assertEqual(len(names), len(set(names)))
-        self.assertEqual([d.internal_name for d in metrics_for_plot_group("program")], ["C_mean", "S_mean", "R_mean"])
+        self.assertEqual(
+            [d.internal_name for d in metrics_for_plot_group("program")],
+            ["C_median", "S_median", "R_median"],
+        )
+        self.assertEqual(
+            [d.internal_name for d in metrics_for_plot_group("program_compatibility")],
+            ["C_mean", "S_mean", "R_mean"],
+        )
         self.assertEqual(metric_definition("H_expr_mean").deprecated, True)
         self.assertEqual(metric_definition("H_expr_mean").observational_only, True)
         self.assertEqual(metric_definition("n_diffuse_components").scale_sensitive, True)

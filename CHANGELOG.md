@@ -2,6 +2,21 @@
 
 All notable public and development changes to SpatialTX Studio Desktop are recorded here.
 
+## v0.65-dev — 2026-08-19
+
+- Added an original SpatialTX Studio spatial-dot application icon, including transparent PNG and multi-size Windows ICO assets, and applied it to the Tk window/taskbar with a non-fatal fallback.
+- Changed the Single Pair `Program scores — Changes` figure from non-informative centered C/S/R means to sample-level C/S/R medians; legacy mean rows remain available in exports for compatibility.
+- Added an optional, default-off Multi-axis Reliability Layer to Multi-Pair Pre/Post without changing v0.6 core scoring or established output tables.
+- Split the score contract: legacy Balance keeps the existing signed v0.6 C/S arrays, while Activity, Direction, and co-activation use a separately preserved pre-z-score nonnegative program mean from the same genes and missing-gene policy.
+- Added explicit `NaN` handling for zero activity, negative/non-finite input status, and combined minimum-valid-count/fraction gates (`30`, `80%`, warning at `50%`) without clipping, shifting, offsets, or cohort-learned correction.
+- Added optional four-state classification only when explicit Activity and Direction thresholds are supplied; no threshold is learned from the analyzed cohort.
+- Added strict canonical cross-exclusivity with Ensembl-version removal and explicit alias-map support, plus per-axis/pole gene coverage QC.
+- Added non-transforming inter-axis dependence QC with Pearson, Spearman, seeded permutation, and BH-FDR infrastructure.
+- Added score-domain CSV/JSON diagnostics, a valid-fraction QC figure, source/domain metadata, and a default-off `v0.65 Reliability` UI tab; H/V remain observational single-pole contexts and are not reinterpreted as paired-pole axes.
+- Preserved pan-cancer/default axis weight 1.0 and recorded epsilon, thresholds, KNN, bootstrap, permutation, FDR, seed, source hashes, and limitations in metadata.
+- Verified the six-pair legacy Balance baseline in 72 comparisons at `rtol=atol=1e-12`; repeated seed-42 runs produced 15 byte-identical reliability artifacts.
+- Confirmed that the corrected nonnegative Activity source passes the default valid-spot gate in all six validation pairs; unsupported or QC-failed values remain `NA` and are excluded from conclusions.
+
 ## v0.6-beta — 2026-08-12
 
 - Promoted the validated v0.6 development line to a public source beta and added four release screenshots.

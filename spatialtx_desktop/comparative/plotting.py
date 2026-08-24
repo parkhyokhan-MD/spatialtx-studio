@@ -268,6 +268,7 @@ def _plot_change_group(
     figure_type: str,
     *,
     note: str = "",
+    metadata_extra: dict | None = None,
     effective_mode: str | None = None,
 ) -> Path:
     plt = _plot_modules()
@@ -315,6 +316,7 @@ def _plot_change_group(
             "numeric_value_labels": True,
             "display_zero_tolerance": 1e-12,
             "raw_values_preserved_in_csv_and_metadata": True,
+            **(metadata_extra or {}),
         },
         effective_mode=effective_mode,
     )
@@ -836,7 +838,14 @@ def generate_comparative_figures(
         ),
         _plot_change_group(
             metric_change_table, "program", output_dir / "comparative_program_score_changes.png", config,
-            "Program score changes", "program_score_changes", effective_mode=effective_mode,
+            "Program score median changes", "program_score_changes",
+            note="Sample-level C/S/R medians; group modes compare group means of sample medians.",
+            metadata_extra={
+                "summary_statistic": "sample-level median",
+                "compatibility_means_retained_in_exports": True,
+                "displayed_metric_names": ["C_median", "S_median", "R_median"],
+            },
+            effective_mode=effective_mode,
         ),
         _plot_change_group(
             metric_change_table, "transition", output_dir / "comparative_transition_changes.png", config,

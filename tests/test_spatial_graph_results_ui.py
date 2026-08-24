@@ -29,7 +29,7 @@ from spatialtx_desktop.spatial_graph_results_ui import (
 
 class FigureDiscoveryTests(unittest.TestCase):
     def test_application_version_changes_but_graph_schema_version_does_not(self) -> None:
-        self.assertEqual(f"v{__version__}", "v0.6-beta")
+        self.assertEqual(f"v{__version__}", "v0.65-dev")
         self.assertEqual(MODULE_VERSION, "0.4")
 
     def test_all_known_suffixes_are_classified_without_short_suffix_collisions(self) -> None:

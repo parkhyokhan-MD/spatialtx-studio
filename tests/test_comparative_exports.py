@@ -100,6 +100,12 @@ class ComparativeExportTests(unittest.TestCase):
             self.assertFalse(
                 (result.run_dir / "comparative_figures" / "comparative_metric_changes_standardized.png").exists()
             )
+            program_meta = json.loads(
+                (result.run_dir / "comparative_figures" / "comparative_program_score_changes.png.metadata.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(program_meta["summary_statistic"], "sample-level median")
+            self.assertEqual(program_meta["displayed_metric_names"], ["C_median", "S_median", "R_median"])
+            self.assertTrue(program_meta["compatibility_means_retained_in_exports"])
             for filename in (
                 "comparative_delta_metrics.csv", "comparative_group_statistics.csv",
                 "comparative_regime_transitions.csv", "comparative_warnings.csv",

@@ -15,6 +15,7 @@ recursive-include docs *.md *.png
 recursive-include examples *.csv *.yaml
 recursive-include tests *.py
 recursive-include tools *.py
+recursive-include spatialtx_desktop/assets *.png *.ico
 recursive-include spatialtx_studio/resources *.yaml
 global-exclude __pycache__
 global-exclude *.py[cod]

@@ -29,10 +29,32 @@ from .workflow import (
 )
 
 
+APP_ASSET_DIR = Path(__file__).resolve().parent / "assets"
+APP_ICON_PNG = APP_ASSET_DIR / "spatialtx_studio_icon.png"
+APP_ICON_ICO = APP_ASSET_DIR / "spatialtx_studio_icon.ico"
+WINDOWS_APP_USER_MODEL_ID = "SpatialTX.Studio.Desktop"
+
+
+def _set_windows_app_user_model_id() -> bool:
+    """Give the Python-hosted Tk window a stable Windows taskbar identity."""
+    if os.name != "nt":
+        return False
+    try:
+        import ctypes
+
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(WINDOWS_APP_USER_MODEL_ID)
+    except (AttributeError, OSError):
+        return False
+    return True
+
+
 class SpatialTXDesktop(tk.Tk):
     def __init__(self) -> None:
+        _set_windows_app_user_model_id()
         super().__init__()
         self.title(f"{APP_NAME} v{__version__}")
+        self._app_icon_photo: tk.PhotoImage | None = None
+        self.app_icon_status = self._apply_application_icon()
         width = min(1680, max(1180, int(self.winfo_screenwidth() * .90)))
         height = min(940, max(760, int(self.winfo_screenheight() * .86)))
         self.geometry(f"{width}x{height}")
@@ -50,6 +72,25 @@ class SpatialTXDesktop(tk.Tk):
         self._build_style()
         self._build_ui()
         self.after(100, self._poll_messages)
+
+    def _apply_application_icon(self) -> str:
+        """Apply packaged icons without making a missing/unsupported icon fatal."""
+        applied: list[str] = []
+        if os.name == "nt" and APP_ICON_ICO.is_file():
+            try:
+                self.iconbitmap(default=str(APP_ICON_ICO))
+                applied.append("ico")
+            except (OSError, tk.TclError):
+                pass
+        if APP_ICON_PNG.is_file():
+            try:
+                photo = tk.PhotoImage(master=self, file=str(APP_ICON_PNG))
+                self.iconphoto(True, photo)
+                self._app_icon_photo = photo
+                applied.append("png")
+            except (OSError, tk.TclError):
+                pass
+        return "+".join(applied) if applied else "default"
 
     def _build_style(self) -> None:
         style = ttk.Style(self)
@@ -383,7 +424,7 @@ class SpatialTXDesktop(tk.Tk):
             ("Creator", AUTHOR),
             ("Version", f"v{__version__}"),
             ("Build date", BUILD_DATE),
-            ("Edition", "v0.6-beta public source release"),
+            ("Edition", "v0.65 development — additive Reliability Layer"),
         ]
         for row, (label, value) in enumerate(details):
             ttk.Label(card, text=label, font=("Segoe UI Semibold", 9)).grid(row=row, column=0, sticky="nw", pady=4)
@@ -403,7 +444,7 @@ class SpatialTXDesktop(tk.Tk):
                 "inputs as canonical H5AD before Main Mapper analysis. The desktop edition also retains the fixed-cardinality "
                 "QUBO-inspired optimizer.\n\n"
                 "Operational regime labels are exploratory candidates and are not validated biological subtypes."
-                "\n\nv0.6-beta provides Comparative Spatial Transition Analysis for pairwise, paired-group, unpaired-group, "
+                "\n\nv0.65-dev preserves the v0.6-beta Comparative Spatial Transition Analysis baseline for pairwise, paired-group, unpaired-group, "
                 "and manifest-based sample-level comparisons. It does not perform direct spatial registration or "
                 "spot-wise subtraction. The Multi-Pair workflow now displays existing H_expr and V_expr definitions as "
                 "optional parallel observational context axes; they do not alter C/S/R, transition masks, or Type A/B/C "
@@ -411,7 +452,11 @@ class SpatialTXDesktop(tk.Tk):
                 "QC, QC-aware interpretation, anatomical-site metadata warnings, raw multiaxial exports, and pair-isolated "
                 "error handling. The H/V computational and audit validation layer records effective genes, per-sample "
                 "coverage/status, raw q90, within-pair pooled high-context fractions, and local high-context fractions. "
-                "No combined response score is calculated. Existing single-sample and Single Pair behavior remains unchanged."
+                "No combined response score is calculated. The optional Multi-axis Reliability Layer is disabled by default. "
+                "It preserves legacy signed Balance and uses a separate pre-z-score nonnegative program abundance for "
+                "Activity/Direction/Co-activation, with count-and-fraction validity gates, score-domain diagnostics, strict "
+                "cross-exclusivity, gene coverage, and axis-dependence QC. Existing result files, single-sample behavior, and "
+                "Single Pair behavior remain unchanged."
             ),
             wraplength=430, justify="left",
         ).pack(anchor="nw", fill="x")

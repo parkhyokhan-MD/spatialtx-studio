@@ -1,10 +1,24 @@
-# SpatialTX Studio Desktop v0.6-beta
+# SpatialTX Studio Desktop v0.65-dev
 
-> Public source beta. Exploratory research use only.
+> Development build preserving the public v0.6-beta baseline. Exploratory research use only.
 
 SpatialTX Studio Desktop is an open-source research workspace for exploratory spatial transcriptomics analysis. It provides a local Python desktop application and command-line workflow for `.h5ad` inputs.
 
 This software is a research prototype. It is not intended for diagnosis, treatment selection, or clinical decision-making. Outputs are exploratory and require independent review and validation.
+
+## What is new in v0.65-dev
+
+v0.65-dev adds a **default-off, additive Multi-axis Reliability Layer** to Multi-Pair Pre/Post. Legacy Balance reads the existing signed v0.6 C/S arrays unchanged. Activity/Direction/Co-activation use a separate pre-z-score nonnegative program mean from the same genes and missing-gene policy. Neither source overwrites C/S/R, spatial masks, H/V context, comparability, Type A/B/C, or established output files.
+
+- Continuous Balance, Activity, Direction, co-activation strength, and co-activation fraction sidecars.
+- Explicit negative/non-finite/zero-activity handling; undefined values remain `NA`.
+- Optional four-state classification only with user-supplied Activity and Direction thresholds.
+- Strict canonical cross-exclusivity, gene coverage QC, and non-transforming dependence QC.
+- A `v0.65 Reliability` UI tab with explicit source/domain labels, validity reasons, and score-domain diagnostics.
+- A count-and-fraction score-domain gate (`30` spots, `80%` valid; warning below `80%`, QC fail below `50%`) with no clipping, shifting, or learned cohort correction.
+- Explicit descriptive-only inference flags for unregistered slides; no specimen-level or treatment-effect claim is allowed.
+
+See [v0.65 Reliability Layer documentation](docs/RELIABILITY_LAYER_V065.md) for formulas, output schemas, validation results, and limitations.
 
 ## What is new in v0.6-beta
 

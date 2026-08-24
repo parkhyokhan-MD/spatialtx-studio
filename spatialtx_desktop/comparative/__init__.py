@@ -1,4 +1,4 @@
-"""Comparative Spatial Transition Analysis for SpatialTX Studio v0.6-beta."""
+"""Preserved v0.6 Comparative Analysis with optional v0.65 sidecars."""
 
 from .models import ComparativeConfig, ComparativeRunResult, SampleRecord
 from .multi_pair import (

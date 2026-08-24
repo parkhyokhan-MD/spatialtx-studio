@@ -14,6 +14,20 @@ import pandas as pd
 from .. import __version__
 from ..graph.context import resolve_context_program
 from ..graph.metadata import json_safe
+from ..reliability.audit import (
+    CrossExclusivityError,
+    audit_cross_exclusivity,
+    gene_coverage_audit,
+)
+from ..reliability.core import axis_spot_frame, compute_reliability_axes
+from ..reliability.dependence import compute_axis_dependence, direction_dependence_matrix
+from ..reliability.diagnostics import build_score_domain_diagnostic
+from ..reliability.exports import build_pair_summary, write_reliability_sidecars
+from ..reliability.models import (
+    RELIABILITY_SCHEMA_VERSION,
+    ReliabilityConfig,
+    ReliabilityResult,
+)
 from ..workflow import _read_h5ad
 from .comparative_normalization import POOLED_HIGH_QUANTILE, apply_pooled_hv_thresholds, percent_change
 from .metrics import COMPARATIVE_METRIC_LAYER_SCHEMA, analyze_sample, file_sha256
@@ -204,6 +218,14 @@ class MultiPairRunResult:
     context_gene_audit: pd.DataFrame = field(default_factory=pd.DataFrame)
     multiaxial_pair_summary: pd.DataFrame = field(default_factory=pd.DataFrame)
     comparative_qc_summary: pd.DataFrame = field(default_factory=pd.DataFrame)
+    reliability_spot_results: pd.DataFrame = field(default_factory=pd.DataFrame)
+    reliability_pair_summary: pd.DataFrame = field(default_factory=pd.DataFrame)
+    reliability_gene_coverage: pd.DataFrame = field(default_factory=pd.DataFrame)
+    cross_exclusivity_audit: pd.DataFrame = field(default_factory=pd.DataFrame)
+    axis_dependence_long: pd.DataFrame = field(default_factory=pd.DataFrame)
+    axis_dependence_matrix: pd.DataFrame = field(default_factory=pd.DataFrame)
+    reliability_score_domain_diagnostic: pd.DataFrame = field(default_factory=pd.DataFrame)
+    reliability_qc: dict = field(default_factory=dict)
 
 
 Progress = Callable[[str], None]
@@ -278,7 +300,13 @@ def _optional_low_quality_fraction(adata) -> tuple[float, str]:
     return np.nan, "not_available"
 
 
-def inspect_h5ad_qc(path: str | Path, c_genes: list[str], s_genes: list[str]) -> dict:
+def inspect_h5ad_qc(
+    path: str | Path,
+    c_genes: list[str],
+    s_genes: list[str],
+    *,
+    include_feature_names: bool = False,
+) -> dict:
     """Read transparent technical QC inputs without inventing pathology labels."""
     resolved = Path(path).resolve()
     adata = _read_h5ad(resolved)
@@ -317,6 +345,8 @@ def inspect_h5ad_qc(path: str | Path, c_genes: list[str], s_genes: list[str]) ->
         "S_gene_coverage": len(s_requested & genes) / max(1, len(s_requested)),
         "matrix_values_note": "Observed adata.X values; library-size comparisons depend on preprocessing compatibility.",
     }
+    if include_feature_names:
+        result["feature_names"] = [str(name) for name in adata.var_names]
     return result
 
 
@@ -1282,6 +1312,35 @@ def _plot_pair_panel(row: dict, output: Path) -> Path:
     return output
 
 
+def _reliability_programs(config: ComparativeConfig) -> dict[str, dict[str, list[str]]]:
+    """Describe existing programs for audit only; no score is recomputed here."""
+    programs: dict[str, dict[str, list[str]]] = {
+        "FRAME2.6_CS": {
+            "C": list(config.c_genes),
+            "S": list(config.s_genes),
+        }
+    }
+    if config.enable_h_expr:
+        programs["H_context"] = {
+            "H": list(resolve_context_program("H", config.h_genes)["requested_genes"])
+        }
+    if config.enable_v_expr:
+        programs["V_context"] = {
+            "V": list(resolve_context_program("V", config.v_genes)["requested_genes"])
+        }
+    return programs
+
+
+def _coverage_by_pole(table: pd.DataFrame, axis: str) -> dict[str, float]:
+    if table.empty:
+        return {}
+    selected = table.loc[table["axis"].eq(axis)]
+    return {
+        str(row["pole"]): float(row["gene_coverage_fraction"])
+        for _, row in selected.iterrows()
+    }
+
+
 def run_multi_pair_analysis(
     pairs: list[PairSpec],
     analysis_config: ComparativeConfig,
@@ -1291,6 +1350,7 @@ def run_multi_pair_analysis(
     cancel_event: CancelEvent = None,
     run_tag: str | None = None,
     interpretation_config: PairInterpretationConfig | None = None,
+    reliability_config: ReliabilityConfig | dict | None = None,
 ) -> MultiPairRunResult:
     pairs = validate_pair_specs(pairs)
     analysis_config.validate()
@@ -1299,6 +1359,8 @@ def run_multi_pair_analysis(
     comparability_config = comparability_config or ComparabilityConfig()
     interpretation_config = interpretation_config or PairInterpretationConfig()
     interpretation_config.validate()
+    reliability_config = ReliabilityConfig.from_value(reliability_config)
+    reliability_config.validate()
     run_dir, timestamp = _unique_run_dir(output_root, run_tag)
     figures_dir = run_dir / "figures"
     # Match the established Single Pair cache location. Keeping the 64-character
@@ -1311,6 +1373,47 @@ def run_multi_pair_analysis(
     context_gene_audit_rows: list[dict] = []
     figures: list[Path] = []
     input_hashes: dict[str, dict[str, str]] = {}
+    reliability_result = ReliabilityResult()
+    reliability_spot_tables: list[pd.DataFrame] = []
+    reliability_pair_tables: list[pd.DataFrame] = []
+    reliability_coverage_tables: list[pd.DataFrame] = []
+    reliability_dependence_tables: list[pd.DataFrame] = []
+    reliability_diagnostic_tables: list[pd.DataFrame] = []
+    reliability_axes: set[str] = set()
+    reliability_errors: list[dict] = []
+    reliability_programs = _reliability_programs(analysis_config)
+
+    if reliability_config.enabled:
+        try:
+            reliability_result.cross_exclusivity_audit = audit_cross_exclusivity(
+                reliability_programs,
+                reliability_config,
+            )
+        except CrossExclusivityError as exc:
+            reliability_result.cross_exclusivity_audit = exc.audit
+            reliability_result.axis_dependence_matrix = pd.DataFrame()
+            reliability_result.qc = {
+                "status": "blocked_cross_exclusivity",
+                "block_reason": str(exc),
+            }
+            write_reliability_sidecars(run_dir, reliability_result, reliability_config)
+            blocked_metadata = {
+                "application": "SpatialTX Studio Desktop",
+                "spatialtx_version": __version__,
+                "analysis_module": "Multi-Pair Pre/Post Comparative Analysis",
+                "created_utc": timestamp,
+                "analysis_status": "blocked_cross_exclusivity",
+                "reliability_schema_version": RELIABILITY_SCHEMA_VERSION,
+                "reliability_layer": reliability_config.to_dict(),
+                "block_reason": str(exc),
+                "output_files": [path.name for path in reliability_result.files],
+                "notice": MULTI_PAIR_NOTICE,
+            }
+            (run_dir / "run_metadata.json").write_text(
+                json.dumps(json_safe(blocked_metadata), indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            raise
 
     for index, pair in enumerate(pairs, start=1):
         if cancel_event is not None and cancel_event.is_set():
@@ -1332,11 +1435,21 @@ def run_multi_pair_analysis(
             row["error"] = "; ".join(structural_errors)
         else:
             try:
-                pre_qc = inspect_h5ad_qc(pair.pre_path, analysis_config.c_genes, analysis_config.s_genes)
+                pre_qc = inspect_h5ad_qc(
+                    pair.pre_path,
+                    analysis_config.c_genes,
+                    analysis_config.s_genes,
+                    include_feature_names=reliability_config.enabled,
+                )
             except Exception as exc:
                 row["error"] = f"Pre unreadable or corrupted: {exc}"
             try:
-                post_qc = inspect_h5ad_qc(pair.post_path, analysis_config.c_genes, analysis_config.s_genes)
+                post_qc = inspect_h5ad_qc(
+                    pair.post_path,
+                    analysis_config.c_genes,
+                    analysis_config.s_genes,
+                    include_feature_names=reliability_config.enabled,
+                )
             except Exception as exc:
                 row["error"] = "; ".join(filter(None, [row["error"], f"Post unreadable or corrupted: {exc}"]))
         input_hashes[pair.label] = {
@@ -1373,6 +1486,126 @@ def run_multi_pair_analysis(
                 })
                 row["regime_transition"] = f"{row['regime_pre']} → {row['regime_post']}"
                 row["pattern_transition"] = f"{row['pattern_pre'] or '-'} → {row['pattern_post'] or '-'}"
+                if reliability_config.enabled:
+                    try:
+                        source_keys = (
+                            "balance_score_source",
+                            "balance_score_domain",
+                            "activity_score_source",
+                            "activity_score_domain",
+                            "activity_source_transformations",
+                            "activity_source_version",
+                        )
+                        pre_source = {
+                            key: str(pre_metrics.get(key, "")) for key in source_keys
+                        }
+                        post_source = {
+                            key: str(post_metrics.get(key, "")) for key in source_keys
+                        }
+                        reliability_diagnostic_tables.extend((
+                            build_score_domain_diagnostic(
+                                pair_label=pair.label,
+                                sample_role="Pre",
+                                sample_file=str(pair.pre_path),
+                                legacy_C=pre_fields["C"],
+                                legacy_S=pre_fields["S"],
+                                activity_C=pre_fields["C_activity"],
+                                activity_S=pre_fields["S_activity"],
+                                source_metadata=pre_metrics,
+                            ),
+                            build_score_domain_diagnostic(
+                                pair_label=pair.label,
+                                sample_role="Post",
+                                sample_file=str(pair.post_path),
+                                legacy_C=post_fields["C"],
+                                legacy_S=post_fields["S"],
+                                activity_C=post_fields["C_activity"],
+                                activity_S=post_fields["S_activity"],
+                                source_metadata=post_metrics,
+                            ),
+                        ))
+                        pre_axes = compute_reliability_axes(
+                            {"FRAME2.6_CS": (pre_fields["C"], pre_fields["S"])},
+                            reliability_config,
+                            activity_axis_scores={
+                                "FRAME2.6_CS": (
+                                    pre_fields["C_activity"],
+                                    pre_fields["S_activity"],
+                                )
+                            },
+                            source_metadata=pre_source,
+                        )
+                        post_axes = compute_reliability_axes(
+                            {"FRAME2.6_CS": (post_fields["C"], post_fields["S"])},
+                            reliability_config,
+                            activity_axis_scores={
+                                "FRAME2.6_CS": (
+                                    post_fields["C_activity"],
+                                    post_fields["S_activity"],
+                                )
+                            },
+                            source_metadata=post_source,
+                        )
+                        reliability_axes.update(pre_axes)
+                        for axis, pre_axis in pre_axes.items():
+                            post_axis = post_axes[axis]
+                            reliability_spot_tables.extend((
+                                axis_spot_frame(
+                                    pre_axis,
+                                    pair_label=pair.label,
+                                    sample_role="Pre",
+                                    sample_file=str(pair.pre_path),
+                                ),
+                                axis_spot_frame(
+                                    post_axis,
+                                    pair_label=pair.label,
+                                    sample_role="Post",
+                                    sample_file=str(pair.post_path),
+                                ),
+                            ))
+                            pre_coverage = gene_coverage_audit(
+                                reliability_programs,
+                                (pre_qc or {}).get("feature_names", []),
+                                reliability_config,
+                                pair_label=pair.label,
+                                sample_role="Pre",
+                                sample_file=str(pair.pre_path),
+                            )
+                            post_coverage = gene_coverage_audit(
+                                reliability_programs,
+                                (post_qc or {}).get("feature_names", []),
+                                reliability_config,
+                                pair_label=pair.label,
+                                sample_role="Post",
+                                sample_file=str(pair.post_path),
+                            )
+                            reliability_coverage_tables.extend((pre_coverage, post_coverage))
+                            reliability_pair_tables.append(build_pair_summary(
+                                pair.label,
+                                pre_axis,
+                                post_axis,
+                                reliability_config,
+                                pre_coverage=_coverage_by_pole(pre_coverage, axis),
+                                post_coverage=_coverage_by_pole(post_coverage, axis),
+                            ))
+                        reliability_dependence_tables.extend((
+                            compute_axis_dependence(
+                                pre_axes,
+                                reliability_config,
+                                sample_id=f"{pair.label}:Pre",
+                            ),
+                            compute_axis_dependence(
+                                post_axes,
+                                reliability_config,
+                                sample_id=f"{pair.label}:Post",
+                            ),
+                        ))
+                    except Exception as reliability_exc:
+                        reliability_errors.append({
+                            "pair_label": pair.label,
+                            "status": "calculation_error",
+                            "error": str(reliability_exc),
+                        })
             except Exception as exc:
                 row["error"] = f"Analysis exception: {exc}"
 
@@ -1502,6 +1735,88 @@ def run_multi_pair_analysis(
         pair_interpretation_summary,
     )
     cohort_summary = _cohort_summary(overview)
+    if reliability_config.enabled:
+        reliability_result.spot_results = (
+            pd.concat(reliability_spot_tables, ignore_index=True)
+            if reliability_spot_tables else pd.DataFrame()
+        )
+        reliability_result.pair_summary = (
+            pd.concat(reliability_pair_tables, ignore_index=True)
+            if reliability_pair_tables else pd.DataFrame()
+        )
+        reliability_result.gene_coverage = (
+            pd.concat(reliability_coverage_tables, ignore_index=True)
+            if reliability_coverage_tables else pd.DataFrame()
+        )
+        nonempty_dependence = [table for table in reliability_dependence_tables if not table.empty]
+        reliability_result.axis_dependence_long = (
+            pd.concat(nonempty_dependence, ignore_index=True)
+            if nonempty_dependence else pd.DataFrame(
+                columns=(reliability_dependence_tables[0].columns if reliability_dependence_tables else [])
+            )
+        )
+        reliability_result.axis_dependence_matrix = direction_dependence_matrix(
+            reliability_result.axis_dependence_long,
+            sorted(reliability_axes),
+        )
+        reliability_result.score_domain_diagnostic = (
+            pd.concat(reliability_diagnostic_tables, ignore_index=True)
+            if reliability_diagnostic_tables else pd.DataFrame()
+        )
+        reliability_result.score_domain_diagnostic_metadata = {
+            "reliability_schema_version": RELIABILITY_SCHEMA_VERSION,
+            "first_negative_stage": "workflow.score_adata:_zscore_columns(expression)",
+            "first_negative_reason": (
+                "Per-gene centering subtracts each selected gene mean across spots; below-mean "
+                "expression therefore becomes negative by design."
+            ),
+            "legacy_balance_path": (
+                "AnnData.X -> selected C/S genes -> optional log1p_count_like -> per-gene z-score "
+                "-> program mean -> configured field normalization/smoothing -> legacy signed C/S -> B=C-S"
+            ),
+            "activity_path": (
+                "AnnData.X -> same selected C/S genes -> optional log1p_count_like -> program mean "
+                "before z-score; no centering, scaling, smoothing, clipping, shift, or offset"
+            ),
+            "raw_mean_metadata_clarification": (
+                "normalization_mode=raw_mean applies after per-gene z-scoring and therefore denotes "
+                "the unmodified mean of signed z-scores, not raw abundance."
+            ),
+        }
+        domain_qc_fail_count = int(
+            reliability_result.pair_summary.get(
+                "pair_score_validity", pd.Series(dtype=str)
+            ).astype(str).str.startswith("qc_fail_").sum()
+        )
+        domain_warning_count = int(
+            reliability_result.pair_summary.get(
+                "pair_score_validity", pd.Series(dtype=str)
+            ).eq("warning_low_valid_fraction").sum()
+        )
+        reliability_result.qc = {
+            "status": (
+                "completed_with_calculation_errors"
+                if reliability_errors
+                else "completed_with_domain_qc_fail"
+                if domain_qc_fail_count
+                else "completed_with_domain_warnings"
+                if domain_warning_count
+                else "completed"
+            ),
+            "calculation_errors": reliability_errors,
+            "domain_qc_fail_pair_count": domain_qc_fail_count,
+            "domain_warning_pair_count": domain_warning_count,
+            "paired_pole_axes": sorted(reliability_axes),
+            "axis_weights": {axis: 1.0 for axis in sorted(reliability_axes)},
+            "pan_cancer_weight": 1.0,
+            "context_axes_audited_but_not_reinterpreted": [
+                axis for axis in ("H_context", "V_context") if axis in reliability_programs
+            ],
+        }
+        write_reliability_sidecars(run_dir, reliability_result, reliability_config)
+        dependence_figure = run_dir / "axis_dependence_heatmap.png"
+        if dependence_figure.is_file():
+            figures.append(dependence_figure)
     _write_csv(run_dir / "pair_results.csv", pair_results)
     _write_csv(run_dir / "balance_changes.csv", balance_changes)
     _write_csv(run_dir / "spatial_organization_changes.csv", spatial_organization_changes)
@@ -1607,7 +1922,73 @@ def run_multi_pair_analysis(
         "H_V_modify_core_fields_or_regimes": False,
         "site_comparability_values": list(SITE_COMPARABILITY_VALUES),
         "notice": MULTI_PAIR_NOTICE,
+        "inference_warning": (
+            "Descriptive spot-distribution comparison of unregistered slides. Not specimen-level "
+            "inference and not evidence of treatment effect."
+        ),
+        "inference_level": "spot_distribution_descriptive",
+        "registered_spots": False,
+        "biological_replicate_inference": False,
+        "treatment_effect_claim_allowed": False,
     }
+    if reliability_config.enabled:
+        metadata["reliability_layer"] = {
+            "reliability_schema_version": RELIABILITY_SCHEMA_VERSION,
+            "configuration": reliability_config.to_dict(),
+            "output_files": [path.name for path in reliability_result.files],
+            "paired_pole_axes": sorted(reliability_axes),
+            "axis_weights": {axis: 1.0 for axis in sorted(reliability_axes)},
+            "pan_cancer_weight": 1.0,
+            "H_V_reinterpreted_as_paired_pole_axes": False,
+            "balance_score_source": "legacy_signed_cs",
+            "balance_score_domain": "signed",
+            "activity_score_source": "pre_zscore_selected_gene_program_mean",
+            "activity_score_domain": "nonnegative_required_no_clipping_or_shift",
+            "activity_source_transformations": (
+                "selected present C/S gene columns -> optional log1p_count_like -> "
+                "mean_across_present_program_genes before per-gene z-score"
+            ),
+            "activity_source_version": "v0.65-nonnegative-program-mean-v1",
+            "score_source_contract": (
+                "Legacy B uses existing v0.6 signed C/S. A/D/CA use the separate pre-centering "
+                "nonnegative source and never replace C/S/R."
+            ),
+            "normalization_mode_clarification": (
+                "raw_mean is applied to the already per-gene-z-scored program field and is signed; "
+                "it does not mean raw abundance."
+            ),
+            "undefined_policy": "NaN retained; no replacement with zero, normal, or negative state",
+            "classification_mode": (
+                "classified" if reliability_config.classification_enabled else "continuous"
+            ),
+            "cross_exclusivity_status": reliability_result.qc.get("status", "completed"),
+            "canonicalization_rule": (
+                "trim|uppercase|ensembl_version_removed|"
+                f"alias_map:{reliability_config.canonicalization_source}:"
+                f"{reliability_config.canonicalization_version}"
+            ),
+            "knn_settings": analysis_config.graph_settings,
+            "bootstrap_iterations": int(reliability_config.bootstrap_iterations),
+            "permutation_iterations": int(reliability_config.permutation_iterations),
+            "fdr_method": reliability_config.fdr_method,
+            "seed": int(reliability_config.seed),
+            "alpha": analysis_config.scoring_options.get("alpha", "not_applicable_canonical_frame26"),
+            "lambda": analysis_config.scoring_options.get("lambda", "not_applicable_canonical_frame26"),
+            "resampling_scope": "spot_distribution_descriptive_unregistered_slides",
+            "specimen_level_inference": False,
+            "inference_level": "spot_distribution_descriptive",
+            "registered_spots": False,
+            "biological_replicate_inference": False,
+            "treatment_effect_claim_allowed": False,
+            "inference_warning": (
+                "Descriptive spot-distribution comparison of unregistered slides. Not specimen-level "
+                "inference and not evidence of treatment effect."
+            ),
+        }
+        metadata["result_layers"]["additive_reliability_sidecar"] = (
+            "v0.65 Balance/Activity/Direction/Co-activation, gene coverage, strict exclusivity, "
+            "and dependence QC; not combined with existing result layers."
+        )
     (run_dir / "run_metadata.json").write_text(
         json.dumps(json_safe(metadata), indent=2, ensure_ascii=False), encoding="utf-8"
     )
@@ -1650,4 +2031,12 @@ def run_multi_pair_analysis(
         context_gene_audit=context_gene_audit,
         multiaxial_pair_summary=multiaxial_pair_summary,
         comparative_qc_summary=comparative_qc_summary,
+        reliability_spot_results=reliability_result.spot_results,
+        reliability_pair_summary=reliability_result.pair_summary,
+        reliability_gene_coverage=reliability_result.gene_coverage,
+        cross_exclusivity_audit=reliability_result.cross_exclusivity_audit,
+        axis_dependence_long=reliability_result.axis_dependence_long,
+        axis_dependence_matrix=reliability_result.axis_dependence_matrix,
+        reliability_score_domain_diagnostic=reliability_result.score_domain_diagnostic,
+        reliability_qc=reliability_result.qc,
     )

@@ -35,9 +35,12 @@ CONTEXT = "Observational context"
 
 # Ordering here is the single deterministic ordering used by exports and plots.
 METRIC_REGISTRY: tuple[MetricDefinition, ...] = (
-    MetricDefinition("C_mean", "C program mean", PROGRAM, "score", plot_group="program", interpretation_priority=2, delta_name="delta_C"),
-    MetricDefinition("S_mean", "S program mean", PROGRAM, "score", plot_group="program", interpretation_priority=2, delta_name="delta_S"),
-    MetricDefinition("R_mean", "R balance-field mean", PROGRAM, "score", plot_group="program", interpretation_priority=2, delta_name="delta_R"),
+    MetricDefinition("C_mean", "C program mean", PROGRAM, "score", plot_group="program_compatibility", interpretation_priority=2, delta_name="delta_C"),
+    MetricDefinition("S_mean", "S program mean", PROGRAM, "score", plot_group="program_compatibility", interpretation_priority=2, delta_name="delta_S"),
+    MetricDefinition("R_mean", "R balance-field mean", PROGRAM, "score", plot_group="program_compatibility", interpretation_priority=2, delta_name="delta_R"),
+    MetricDefinition("C_median", "C program median", PROGRAM, "score", plot_group="program", interpretation_priority=2, delta_name="delta_C_median"),
+    MetricDefinition("S_median", "S program median", PROGRAM, "score", plot_group="program", interpretation_priority=2, delta_name="delta_S_median"),
+    MetricDefinition("R_median", "R balance-field median", PROGRAM, "score", plot_group="program", interpretation_priority=2, delta_name="delta_R_median"),
     MetricDefinition("R_std", "R variability", PROGRAM, "score", interpretation_priority=2, delta_name="delta_R_variability"),
     MetricDefinition("gradient_mean", "Gradient mean", TRANSITION, "score", plot_group="transition", interpretation_priority=2),
     MetricDefinition("gradient_q90", "Gradient 90th percentile", TRANSITION, "score", plot_group="transition", interpretation_priority=2),

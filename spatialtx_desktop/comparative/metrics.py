@@ -16,7 +16,13 @@ from ..graph.context import (
     resolve_context_program,
 )
 from ..graph.metadata import json_safe
-from ..workflow import ScoringOptions, _read_h5ad, inspect_h5ad_memory, score_adata
+from ..workflow import (
+    ACTIVITY_SOURCE_VERSION,
+    ScoringOptions,
+    _read_h5ad,
+    inspect_h5ad_memory,
+    score_adata,
+)
 from .comparative_normalization import (
     add_normalized_topology_metrics,
     noncentered_context_values,
@@ -67,6 +73,7 @@ def _cache_payload(record: SampleRecord, config: ComparativeConfig, input_hash: 
     return {
         "application_version": __version__,
         "comparative_metric_layer_schema": COMPARATIVE_METRIC_LAYER_SCHEMA,
+        "activity_source_contract": ACTIVITY_SOURCE_VERSION,
         "input_hash": input_hash,
         "C_genes": config.c_genes,
         "S_genes": config.s_genes,
@@ -273,6 +280,8 @@ def analyze_sample(
         "S": S,
         "R": R,
         "G": G,
+        "C_activity": np.asarray(scored_fields["C_activity"], dtype=float),
+        "S_activity": np.asarray(scored_fields["S_activity"], dtype=float),
         "interface": np.asarray(scored_fields["interface"], dtype=np.uint8),
         "diffuse": np.asarray(scored_fields["diffuse"], dtype=np.uint8),
     }

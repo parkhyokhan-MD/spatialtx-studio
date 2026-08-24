@@ -26,6 +26,7 @@ from .comparative.multi_pair import (
     validate_pair_identity,
     validate_pair_specs,
 )
+from .reliability.models import ReliabilityConfig
 
 
 class MultiPairAnalysisPanel(ttk.Frame):
@@ -59,6 +60,11 @@ class MultiPairAnalysisPanel(ttk.Frame):
         self.h_var = tk.BooleanVar(value=True)
         self.v_var = tk.BooleanVar(value=True)
         self.context_smoothing_var = tk.StringVar(value="none")
+        self.reliability_layer_var = tk.BooleanVar(value=False)
+        self.reliability_classification_var = tk.BooleanVar(value=False)
+        self.reliability_epsilon_var = tk.StringVar(value="1e-9")
+        self.reliability_activity_threshold_var = tk.StringVar()
+        self.reliability_direction_threshold_var = tk.StringVar()
         self.status_var = tk.StringVar(
             value=f"Ready. Configure 1–{MAX_MULTI_PAIRS} complete Pre/Post pairs."
         )
@@ -70,7 +76,7 @@ class MultiPairAnalysisPanel(ttk.Frame):
         self.after(100, self._poll)
 
     def _build(self) -> None:
-        intro = ttk.LabelFrame(self, text="Paired Spatial Comparison — v0.6-beta", padding=9)
+        intro = ttk.LabelFrame(self, text="Paired Spatial Comparison — v0.65-dev", padding=9)
         intro.pack(fill="x")
         ttk.Label(
             intro,
@@ -181,6 +187,36 @@ class MultiPairAnalysisPanel(ttk.Frame):
             text="Existing SpatialTX H/V programs; observational only.",
             foreground="#4b5563",
         ).pack(side="left", padx=(10, 0))
+        reliability_controls = ttk.Frame(settings)
+        reliability_controls.grid(row=4, column=0, columnspan=8, sticky="ew", pady=(7, 0))
+        ttk.Checkbutton(
+            reliability_controls,
+            text="Enable v0.65 Reliability Layer (additive sidecars)",
+            variable=self.reliability_layer_var,
+        ).pack(side="left")
+        ttk.Label(reliability_controls, text="epsilon").pack(side="left", padx=(12, 4))
+        ttk.Entry(
+            reliability_controls,
+            textvariable=self.reliability_epsilon_var,
+            width=9,
+        ).pack(side="left")
+        ttk.Checkbutton(
+            reliability_controls,
+            text="Classified mode",
+            variable=self.reliability_classification_var,
+        ).pack(side="left", padx=(12, 0))
+        ttk.Label(reliability_controls, text="Activity threshold").pack(side="left", padx=(8, 4))
+        ttk.Entry(
+            reliability_controls,
+            textvariable=self.reliability_activity_threshold_var,
+            width=8,
+        ).pack(side="left")
+        ttk.Label(reliability_controls, text="Direction threshold").pack(side="left", padx=(8, 4))
+        ttk.Entry(
+            reliability_controls,
+            textvariable=self.reliability_direction_threshold_var,
+            width=8,
+        ).pack(side="left")
 
         actions = ttk.Frame(self)
         actions.pack(fill="x", pady=(7, 0))
@@ -207,6 +243,7 @@ class MultiPairAnalysisPanel(ttk.Frame):
         spatial_tab = ttk.Frame(self.result_tabs, padding=5)
         context_tab = ttk.Frame(self.result_tabs, padding=5)
         reliability_tab = ttk.Frame(self.result_tabs, padding=5)
+        axis_reliability_tab = ttk.Frame(self.result_tabs, padding=5)
         overview_tab = ttk.Frame(self.result_tabs, padding=5)
         figure_tab = ttk.Frame(self.result_tabs, padding=5)
         log_tab = ttk.Frame(self.result_tabs, padding=5)
@@ -216,6 +253,7 @@ class MultiPairAnalysisPanel(ttk.Frame):
         self.result_tabs.add(spatial_tab, text="2  Spatial organization")
         self.result_tabs.add(context_tab, text="H/V Context")
         self.result_tabs.add(reliability_tab, text="3  Specimen reliability")
+        self.result_tabs.add(axis_reliability_tab, text="v0.65 Reliability")
         self.result_tabs.add(overview_tab, text="Multiaxial Overview")
         self.result_tabs.add(figure_tab, text="Figure")
         self.result_tabs.add(log_tab, text="Status log")
@@ -293,6 +331,33 @@ class MultiPairAnalysisPanel(ttk.Frame):
         ttk.Label(reliability_tab, text="Detailed technical, sampling, coverage, occupancy, and geometry checks:").pack(anchor="w", pady=(5, 0))
         self.qc_tree = self._table(reliability_tab, height=6)
         ttk.Label(
+            axis_reliability_tab,
+            text=(
+                "Legacy signed Balance: preserved v0.6 C/S and B=C-S.  |  "
+                "Nonnegative Activity/Co-activation: separate pre-centering program abundance; no clipping or shift. "
+                "Validity requires both spot count and valid fraction; QC fail/warning reasons remain visible. "
+                "Descriptive spot-distribution comparison of unregistered slides. Not specimen-level inference "
+                "and not evidence of treatment effect."
+            ),
+            foreground="#0f766e",
+            wraplength=1100,
+            justify="left",
+        ).pack(anchor="w", fill="x")
+        reliability_notebook = ttk.Notebook(axis_reliability_tab)
+        reliability_notebook.pack(fill="both", expand=True, pady=(5, 0))
+        reliability_summary_tab = ttk.Frame(reliability_notebook, padding=4)
+        reliability_audit_tab = ttk.Frame(reliability_notebook, padding=4)
+        reliability_dependence_tab = ttk.Frame(reliability_notebook, padding=4)
+        reliability_domain_tab = ttk.Frame(reliability_notebook, padding=4)
+        reliability_notebook.add(reliability_summary_tab, text="Pre/Post summary")
+        reliability_notebook.add(reliability_audit_tab, text="Gene audit & coverage")
+        reliability_notebook.add(reliability_dependence_tab, text="Axis dependence")
+        reliability_notebook.add(reliability_domain_tab, text="Score domain")
+        self.axis_reliability_tree = self._table(reliability_summary_tab, height=10)
+        self.reliability_audit_tree = self._table(reliability_audit_tab, height=10)
+        self.axis_dependence_tree = self._table(reliability_dependence_tab, height=10)
+        self.score_domain_tree = self._table(reliability_domain_tab, height=10)
+        ttk.Label(
             overview_tab,
             text="The overview aligns the three result layers but does not calculate an overall response, quality, or clinical score.",
             foreground="#334155",
@@ -357,6 +422,19 @@ class MultiPairAnalysisPanel(ttk.Frame):
             "- H/V are optional. Missing H/V values are displayed as not available and never fail C/S/FRAME2.6 analysis.\n"
             "- H/V do not modify C, S, R, transition masks, interface/diffuse metrics, or Type A/B/C. They are not "
             "combined with the three result layers into a response score.\n\n"
+            "OPTIONAL v0.65 RELIABILITY LAYER\n"
+            "• Disabled by default. When disabled, v0.6 outputs and run metadata are unchanged.\n"
+            "• Legacy signed Balance uses the preserved v0.6 C/S arrays. Activity/Direction/co-activation use a separate "
+            "pre-z-score nonnegative program abundance from the same genes; neither source replaces the other.\n"
+            "• Validity requires both the configured spot count and valid fraction. Negative, NaN, Inf, and zero-activity "
+            "direction remain explicitly invalid or undefined; values remain visible with QC status.\n"
+            "• Bootstrap/permutation outputs compare unregistered spot distributions only. They are not specimen-level "
+            "inference or evidence of treatment effect.\n"
+            "• Continuous mode is primary. Classified mode requires explicit Activity and Direction thresholds and uses "
+            "only low_activity, c_dominant_active, s_dominant_active, and active_coactivation_candidate.\n"
+            "• Strict canonical gene overlap blocks the reliability run after writing its audit. Axis dependence is QC only; "
+            "axes are never orthogonalized, transformed, or removed.\n"
+            "• H/V are included in cross-exclusivity and coverage audit but are not treated as paired-pole reliability axes.\n\n"
             "TRANSPARENT QUALITATIVE CHANGE LABELS\n"
             "• Balance class uses max(|Delta C|, |Delta S|, |Delta R|): "
             f"Minimal < {icfg.balance_moderate_abs_delta:.3g}; Moderate < {icfg.balance_large_abs_delta:.3g}; Large otherwise.\n"
@@ -515,12 +593,36 @@ class MultiPairAnalysisPanel(ttk.Frame):
             context_smoothing=self.context_smoothing_var.get(),
         )
 
+    def _reliability_config(self) -> ReliabilityConfig:
+        if not self.reliability_layer_var.get():
+            return ReliabilityConfig(enabled=False)
+        classified = bool(self.reliability_classification_var.get())
+        activity_text = self.reliability_activity_threshold_var.get().strip()
+        direction_text = self.reliability_direction_threshold_var.get().strip()
+        config = ReliabilityConfig(
+            enabled=True,
+            score_domain="nonnegative",
+            epsilon=float(self.reliability_epsilon_var.get().strip()),
+            classification_enabled=classified,
+            activity_threshold=float(activity_text) if activity_text else None,
+            direction_threshold=float(direction_text) if direction_text else None,
+            strict_cross_exclusivity=True,
+            dependence_qc=True,
+            bootstrap_iterations=1000,
+            permutation_iterations=1000,
+            fdr_method="benjamini-hochberg",
+            seed=42,
+        )
+        config.validate()
+        return config
+
     def _run_async(self) -> None:
         if self.busy:
             return
         try:
             pairs = self._pairs()
             config = self._analysis_config()
+            reliability_config = self._reliability_config()
             output = self.output_var.get().strip()
             if not output:
                 raise ValueError("Choose an output root.")
@@ -562,6 +664,7 @@ class MultiPairAnalysisPanel(ttk.Frame):
                     self.cancel_event,
                     self.run_tag_var.get().strip() or None,
                     interpretation_config=self.interpretation_config,
+                    reliability_config=reliability_config,
                 )
                 self.events.put(("done", result))
             except Exception as exc:
@@ -672,6 +775,71 @@ class MultiPairAnalysisPanel(ttk.Frame):
             ],
         )
         self._fill_tree(
+            self.axis_reliability_tree,
+            result.reliability_pair_summary,
+            [
+                "pair_label", "axis", "balance_score_source", "balance_score_domain",
+                "activity_score_source", "activity_score_domain",
+                "pre_B", "post_B", "delta_B",
+                "pre_A", "post_A", "delta_A", "pre_D", "post_D", "delta_D",
+                "pre_CA_strength", "post_CA_strength", "delta_CA_strength",
+                "pre_CA_fraction", "post_CA_fraction", "delta_CA_fraction",
+                "pre_valid_input_fraction", "post_valid_input_fraction",
+                "pre_undefined_fraction", "post_undefined_fraction",
+                "pre_total_spot_count", "post_total_spot_count",
+                "pre_valid_spot_count", "post_valid_spot_count", "minimum_valid_spots",
+                "minimum_valid_fraction", "warning_valid_fraction",
+                "pre_score_validity", "post_score_validity", "pair_score_validity",
+                "pre_validity_reason", "post_validity_reason", "pair_validity_reason",
+                "activity_summary_included_in_conclusion", "classification_enabled", "epsilon",
+                "inference_level", "specimen_level_inference", "inference_warning",
+            ],
+        )
+        exclusivity_display = result.cross_exclusivity_audit.copy()
+        if not exclusivity_display.empty:
+            exclusivity_display.insert(0, "audit_type", "cross_exclusivity")
+        coverage_display = result.reliability_gene_coverage.copy()
+        if not coverage_display.empty:
+            coverage_display.insert(0, "audit_type", "gene_coverage")
+        reliability_audit = pd.concat(
+            [table for table in (exclusivity_display, coverage_display) if not table.empty],
+            ignore_index=True,
+            sort=False,
+        ) if not exclusivity_display.empty or not coverage_display.empty else pd.DataFrame()
+        self._fill_tree(
+            self.reliability_audit_tree,
+            reliability_audit,
+            [
+                "audit_type", "pair_label", "sample_role", "axis", "pole",
+                "canonical_gene", "overlap_type", "severity", "action",
+                "n_genes_requested", "n_genes_present", "gene_coverage_fraction",
+                "missing_genes", "coverage_status", "score_validity", "normalization_rule",
+            ],
+        )
+        self._fill_tree(
+            self.axis_dependence_tree,
+            result.axis_dependence_long,
+            [
+                "sample_id", "axis_i", "axis_j", "dependence_type", "metric_i", "metric_j",
+                "pearson_correlation", "spearman_correlation", "valid_spot_count",
+                "missing_undefined_fraction", "permutation_p_value", "bh_fdr", "qc_status",
+                "permutation_scope",
+            ],
+        )
+        self._fill_tree(
+            self.score_domain_tree,
+            result.reliability_score_domain_diagnostic,
+            [
+                "pair_label", "sample_role", "score_role", "score_source", "score_domain",
+                "total_spots", "finite_spots", "C_min", "C_q01", "C_median", "C_q99", "C_max",
+                "S_min", "S_q01", "S_median", "S_q99", "S_max",
+                "either_negative_count", "either_negative_fraction",
+                "both_nonnegative_count", "both_nonnegative_fraction",
+                "nonfinite_count", "nonfinite_fraction", "first_negative_stage",
+                "transformation_history",
+            ],
+        )
+        self._fill_tree(
             self.overview_tree,
             result.overview_interpretation,
             [
@@ -712,6 +880,8 @@ class MultiPairAnalysisPanel(ttk.Frame):
                 if path.name == "multi_pair_comparative_overview.png"
                 else "Multiaxial change profile"
                 if path.name == "multiaxial_pair_overview.png"
+                else "v0.65 axis-dependence QC"
+                if path.name == "axis_dependence_heatmap.png"
                 else path.stem
             ): path
             for path in result.figures

@@ -1,6 +1,8 @@
-# SpatialTX Studio Desktop v0.6-beta
+# SpatialTX Studio Desktop v0.65-dev
 
-> Public source beta. Exploratory research use only.
+> Development build preserving the public v0.6-beta baseline. Exploratory research use only.
+
+v0.65-dev adds an optional, default-off **Multi-axis Reliability Layer** to Multi-Pair Pre/Post. Legacy Balance preserves signed v0.6 C/S, while Activity/Direction/Co-activation use a separate pre-z-score nonnegative program abundance from the same genes. The UI exposes source/domain labels, valid counts/fractions, QC reasons, score-domain diagnostics, and descriptive-only inference warnings without changing established v0.6 result files. See [the v0.65 guide](docs/RELIABILITY_LAYER_V065.md).
 
 v0.6-beta adds **Multiaxial Comparative Analysis + QC-aware paired interpretation** and an **H/V computational and audit validation layer**: effective genes, per-sample coverage/status, raw upper-tail summaries, within-pair pooled high-context fractions, and local high-context fractions. Import / Convert, Main Mapper, Single Pair Comparative Analysis, Advanced Analysis, graph tools, viewer, and existing output contracts remain available.
 
@@ -9,9 +11,9 @@ The v0.4 line adds an optional **Spatial Graph & Neighborhood — Experimental**
 Windows desktop research prototype for the main `.h5ad` SpatialTX workflow.
 
 - Creator: **Hyokhan Park, MD**
-- Version: **v0.6-beta**
-- Release date: **2026-08-12**
-- Edition: **Public source beta**
+- Version: **v0.65-dev**
+- Build date: **2026-08-19**
+- Edition: **Development — additive Reliability Layer**
 
 The v0.6 screenshots were captured during final development testing and may show the internal `v0.6-dev-HV-validation` label. The published source identifies itself as `v0.6-beta`.
 

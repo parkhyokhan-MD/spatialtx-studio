@@ -566,7 +566,7 @@ class ComparativeAnalysisPanel(ttk.Frame):
             "comparative_group_distributions.png": "Overview — Group distributions",
             "comparative_metric_changes.png": "Overview — Raw delta (two independent panels)",
             "comparative_metric_changes_standardized.png": "Overview — Standardized change (group analyses)",
-            "comparative_program_score_changes.png": "Program scores — Changes",
+            "comparative_program_score_changes.png": "Program score medians — Changes",
             "comparative_transition_changes.png": "Transition metrics — Changes",
             "comparative_graph_changes.png": "Graph metrics — Changes",
             "comparative_topology_raw_counts.png": "Topology: raw counts — Changes",

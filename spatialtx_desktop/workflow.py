@@ -48,6 +48,7 @@ G_Q_LIST = [0.50, 0.60, 0.70]
 SMOOTHING_MODES = {"none", "knn_mean", "gaussian"}
 NORMALIZATION_MODES = {"raw_mean", "z_score", "rank_quantile"}
 MEMORY_DENSE_WARNING_BYTES = 4 * 1024 ** 3
+ACTIVITY_SOURCE_VERSION = "v0.65-nonnegative-program-mean-v1"
 
 
 @dataclass(frozen=True)
@@ -670,6 +671,27 @@ def score_adata(
     count_like = _is_count_like(adata.X)
     if count_like:
         expression = np.log1p(expression)
+    # Preserve a separate pre-centering program abundance for the optional
+    # Reliability Layer.  This is the same selected-gene matrix and the same
+    # count-like log1p policy as the legacy engine, but it is captured before
+    # per-gene z-scoring.  It is never clipped, shifted, min-max scaled, or
+    # substituted for the established signed C/S fields below.
+    C_activity = np.nanmean(expression[:, :len(c_idx)], axis=1)
+    S_activity = np.nanmean(expression[:, len(c_idx):], axis=1)
+    activity_finite = np.isfinite(C_activity) & np.isfinite(S_activity)
+    activity_nonnegative = activity_finite & (C_activity >= 0) & (S_activity >= 0)
+    activity_source_valid = bool(activity_nonnegative.all())
+    activity_score_source = (
+        "selected_gene_program_mean_after_log1p_count_like"
+        if count_like
+        else "selected_gene_program_mean_existing_processed_scale"
+    )
+    activity_transformations = (
+        "AnnData.X -> selected present C/S gene columns -> "
+        + ("log1p_count_like" if count_like else "existing_processed_scale_as_stored")
+        + " -> mean_across_present_program_genes; no centering, scaling, smoothing, clipping, shift, or offset"
+    )
+
     z = _zscore_columns(expression)
     C_raw = np.nanmean(z[:, :len(c_idx)], axis=1)
     S_raw = np.nanmean(z[:, len(c_idx):], axis=1)
@@ -717,6 +739,26 @@ def score_adata(
         "n_spots": int(adata.n_obs), "n_genes": int(adata.n_vars), "coordinate_source": coord_source,
         "expression_transform": "log1p_count_like" if count_like else "existing_processed_scale",
         "normalization_mode": options.normalization_mode,
+        "normalization_mode_scope": "post_per_gene_zscore_program_field_transform",
+        "raw_mean_interpretation": (
+            "raw_mean retains the mean of per-gene z-scores; it is signed and is not raw abundance"
+        ),
+        "balance_score_source": "legacy_signed_cs",
+        "balance_score_domain": "signed",
+        "balance_source_transformations": (
+            "AnnData.X -> selected present C/S gene columns -> "
+            + ("log1p_count_like" if count_like else "existing_processed_scale_as_stored")
+            + " -> per_gene_zscore_across_spots -> mean_across_present_program_genes"
+            + f" -> normalization_mode={options.normalization_mode}"
+            + f" -> smoothing_mode={options.smoothing_mode}"
+        ),
+        "activity_score_source": activity_score_source,
+        "activity_score_domain": "nonnegative" if activity_source_valid else "invalid_nonnegative_contract",
+        "activity_source_transformations": activity_transformations,
+        "activity_source_version": ACTIVITY_SOURCE_VERSION,
+        "activity_source_valid": activity_source_valid,
+        "activity_source_invalid_count": int((~activity_nonnegative).sum()),
+        "activity_source_invalid_fraction": float((~activity_nonnegative).mean()),
         "smoothing_mode": options.smoothing_mode,
         "smoothing_k": int(options.smoothing_k),
         "gaussian_sigma": float(options.gaussian_sigma),
@@ -785,6 +827,7 @@ def score_adata(
     }
     fields = {
         "coords": coords, "C": C, "S": S, "R": R, "G": G,
+        "C_activity": C_activity, "S_activity": S_activity,
         "high_c": classification["high_c"],
         "high_s": classification["high_s"],
         "high_g": classification["high_g"],
