@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 
 
-RELIABILITY_SCHEMA_VERSION = "v0.65-reliability-v2"
+RELIABILITY_SCHEMA_VERSION = "v0.65-reliability-v3-metric-qc"
 RELIABILITY_STATES = (
     "low_activity",
     "c_dominant_active",
@@ -123,6 +123,7 @@ class AxisReliabilityResult:
     nonnegative_input: np.ndarray
     valid_input: np.ndarray
     direction_defined: np.ndarray
+    ca_defined: np.ndarray
     balance_score_source: str = "legacy_signed_cs"
     balance_score_domain: str = "signed"
     activity_score_source: str = "explicit_nonnegative_program_abundance"
@@ -135,6 +136,7 @@ class AxisReliabilityResult:
 class ReliabilityResult:
     spot_results: pd.DataFrame = field(default_factory=pd.DataFrame)
     pair_summary: pd.DataFrame = field(default_factory=pd.DataFrame)
+    metric_qc: pd.DataFrame = field(default_factory=pd.DataFrame)
     gene_coverage: pd.DataFrame = field(default_factory=pd.DataFrame)
     cross_exclusivity_audit: pd.DataFrame = field(default_factory=pd.DataFrame)
     axis_dependence_long: pd.DataFrame = field(default_factory=pd.DataFrame)

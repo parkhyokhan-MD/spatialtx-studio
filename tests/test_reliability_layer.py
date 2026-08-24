@@ -14,8 +14,8 @@ from spatialtx_desktop.reliability.audit import (
     gene_coverage_audit,
 )
 from spatialtx_desktop.reliability.core import compute_axis_reliability, compute_reliability_axes
-from spatialtx_desktop.reliability.dependence import compute_axis_dependence
-from spatialtx_desktop.reliability.exports import build_pair_summary
+from spatialtx_desktop.reliability.dependence import bh_adjust, compute_axis_dependence
+from spatialtx_desktop.reliability.exports import build_metric_qc_table, build_pair_summary
 from spatialtx_desktop.reliability.models import ReliabilityConfig
 from spatialtx_desktop.comparative.models import ComparativeConfig
 from spatialtx_desktop.comparative.multi_pair import PairSpec, run_multi_pair_analysis
@@ -244,6 +244,144 @@ class ReliabilityAuditTests(unittest.TestCase):
         self.assertEqual(s_row["coverage_status"], "caution")
 
 
+class ReliabilityMetricQCGateTests(unittest.TestCase):
+    @staticmethod
+    def _result(defined_n: int, total: int = 100):
+        activity_c = np.r_[np.ones(defined_n), np.zeros(total - defined_n)]
+        activity_s = np.zeros(total)
+        return compute_axis_reliability(
+            np.linspace(-1.0, 1.0, total),
+            np.linspace(1.0, -1.0, total),
+            activity_C=activity_c,
+            activity_S=activity_s,
+        )
+
+    @staticmethod
+    def _config() -> ReliabilityConfig:
+        return ReliabilityConfig(
+            minimum_valid_spots=30,
+            minimum_valid_fraction=0.80,
+            warning_valid_fraction=0.50,
+            bootstrap_iterations=7,
+            permutation_iterations=7,
+            seed=42,
+        )
+
+    def _summary(self, defined_n: int, total: int = 100) -> pd.Series:
+        result = self._result(defined_n, total)
+        return build_pair_summary("pair", result, result, self._config()).iloc[0]
+
+    def _assert_inference_missing(self, row: pd.Series) -> None:
+        for metric in ("D", "CA_fraction"):
+            self.assertTrue(np.isnan(row[f"delta_{metric}_bootstrap_ci_low"]))
+            self.assertTrue(np.isnan(row[f"delta_{metric}_bootstrap_ci_high"]))
+            self.assertTrue(np.isnan(row[f"delta_{metric}_permutation_p_value"]))
+            self.assertTrue(np.isnan(row[f"delta_{metric}_bh_fdr"]))
+
+    def test_a_two_defined_spots_keep_pair_valid_but_block_direction_and_ca_inference(self) -> None:
+        row = self._summary(2)
+        self.assertEqual(row["pair_score_validity"], "valid")
+        self.assertEqual(row["direction_qc_status"], "FAIL")
+        self.assertEqual(row["ca_qc_status"], "FAIL")
+        self.assertFalse(row["direction_inference_eligible"])
+        self.assertFalse(row["ca_inference_eligible"])
+        self.assertTrue(np.isfinite(row["pre_D"]))
+        self.assertTrue(np.isfinite(row["pre_CA_fraction"]))
+        self._assert_inference_missing(row)
+
+    def test_b_twenty_nine_defined_spots_fail_even_above_eighty_percent(self) -> None:
+        row = self._summary(29, total=30)
+        self.assertAlmostEqual(row["pre_direction_defined_fraction"], 29 / 30)
+        self.assertEqual(row["direction_qc_status"], "FAIL")
+        self.assertEqual(row["ca_qc_status"], "FAIL")
+        self.assertIn("defined_spot_count_below_minimum", row["direction_qc_reason"])
+        self._assert_inference_missing(row)
+
+    def test_c_count_and_fraction_pass_boundaries_are_inclusive(self) -> None:
+        # Integer spot counts cannot simultaneously be exactly n=30 and 80%
+        # (30 / 0.80 = 37.5), so the two inclusive boundaries are tested
+        # separately: exactly 30 spots, then exactly 80% support.
+        exactly_thirty = self._summary(30, total=36)
+        exactly_eighty_percent = self._summary(32, total=40)
+        for row in (exactly_thirty, exactly_eighty_percent):
+            self.assertEqual(row["direction_qc_status"], "PASS")
+            self.assertEqual(row["ca_qc_status"], "PASS")
+            self.assertTrue(row["direction_inference_eligible"])
+            self.assertTrue(row["ca_inference_eligible"])
+            self.assertTrue(np.isfinite(row["delta_D_permutation_p_value"]))
+            self.assertTrue(np.isfinite(row["delta_D_bh_fdr"]))
+            self.assertTrue(np.isfinite(row["delta_CA_fraction_permutation_p_value"]))
+            self.assertTrue(np.isfinite(row["delta_CA_fraction_bh_fdr"]))
+        self.assertEqual(exactly_thirty["pre_direction_defined_n"], 30)
+        self.assertEqual(exactly_eighty_percent["pre_direction_defined_fraction"], 0.80)
+
+    def test_d_seventy_nine_percent_is_caution_and_has_no_inference(self) -> None:
+        row = self._summary(79)
+        self.assertEqual(row["direction_qc_status"], "CAUTION")
+        self.assertEqual(row["ca_qc_status"], "CAUTION")
+        self.assertIn("defined_fraction_below_pass_threshold", row["ca_qc_reason"])
+        self._assert_inference_missing(row)
+
+    def test_e_exactly_fifty_percent_is_caution(self) -> None:
+        row = self._summary(50)
+        self.assertEqual(row["direction_qc_status"], "CAUTION")
+        self.assertEqual(row["ca_qc_status"], "CAUTION")
+        self.assertFalse(row["direction_inference_eligible"])
+        self.assertFalse(row["ca_inference_eligible"])
+        self._assert_inference_missing(row)
+
+    def test_f_below_fifty_percent_fails(self) -> None:
+        row = self._summary(49)
+        self.assertEqual(row["direction_qc_status"], "FAIL")
+        self.assertEqual(row["ca_qc_status"], "FAIL")
+        self.assertIn("defined_fraction_below_minimum", row["direction_qc_reason"])
+        self._assert_inference_missing(row)
+
+    def test_g_zero_defined_spots_are_explicitly_missing_and_fail(self) -> None:
+        row = self._summary(0)
+        self.assertTrue(np.isnan(row["pre_D"]))
+        self.assertTrue(np.isnan(row["pre_CA_fraction"]))
+        self.assertEqual(row["direction_qc_status"], "FAIL")
+        self.assertEqual(row["ca_qc_status"], "FAIL")
+        self.assertIn("no_defined_spots", row["direction_qc_reason"])
+        self._assert_inference_missing(row)
+
+    def test_h_bh_excludes_missing_ineligible_metrics(self) -> None:
+        adjusted = bh_adjust([0.01, 0.04, np.nan, np.nan])
+        np.testing.assert_allclose(adjusted[:2], [0.02, 0.04])
+        self.assertTrue(np.isnan(adjusted[2:]).all())
+
+        row = self._summary(2)
+        self.assertTrue(np.isfinite(row["delta_A_permutation_p_value"]))
+        self.assertTrue(np.isfinite(row["delta_A_bh_fdr"]))
+        self.assertTrue(np.isnan(row["delta_D_permutation_p_value"]))
+        self.assertTrue(np.isnan(row["delta_D_bh_fdr"]))
+        self.assertTrue(np.isnan(row["delta_CA_fraction_permutation_p_value"]))
+        self.assertTrue(np.isnan(row["delta_CA_fraction_bh_fdr"]))
+
+    def test_metric_qc_table_exports_explicit_denominators_masks_and_reasons(self) -> None:
+        result = self._result(50)
+        table = build_metric_qc_table("pair", result, result, self._config())
+        self.assertEqual(len(table), 2)
+        for column in (
+            "direction_defined_n",
+            "direction_valid_input_n",
+            "direction_defined_fraction",
+            "direction_qc_status",
+            "direction_inference_eligible",
+            "direction_qc_reason",
+            "ca_defined_n",
+            "ca_valid_input_n",
+            "ca_defined_fraction",
+            "ca_qc_status",
+            "ca_inference_eligible",
+            "ca_qc_reason",
+        ):
+            self.assertIn(column, table.columns)
+        self.assertTrue(table["direction_ca_share_defined_mask"].all())
+        self.assertTrue(table["defined_fraction_denominator"].eq("valid_input_n").all())
+
+
 class ReliabilityDependenceTests(unittest.TestCase):
     def test_high_dependence_is_warned_but_axes_are_not_changed(self) -> None:
         rng = np.random.default_rng(42)
@@ -270,6 +408,32 @@ class ReliabilityDependenceTests(unittest.TestCase):
         table = compute_axis_dependence({"axis": axis})
         self.assertTrue(table.empty)
         self.assertIn("bh_fdr", table.columns)
+
+    def test_direction_dependence_inference_uses_metric_support_gate(self) -> None:
+        total = 100
+        sparse = compute_axis_reliability(
+            np.linspace(0.0, 1.0, total),
+            np.linspace(1.0, 0.0, total),
+            activity_C=np.r_[np.ones(2), np.zeros(total - 2)],
+            activity_S=np.zeros(total),
+            axis="sparse",
+        )
+        dense = compute_axis_reliability(
+            np.linspace(0.0, 1.0, total),
+            np.linspace(1.0, 0.0, total),
+            activity_C=np.linspace(0.1, 1.0, total),
+            activity_S=np.linspace(1.0, 0.1, total),
+            axis="dense",
+        )
+        table = compute_axis_dependence(
+            {"sparse": sparse, "dense": dense},
+            ReliabilityConfig(permutation_iterations=7),
+        )
+        direction_row = table.loc[table["dependence_type"].eq("direction_dependence")].iloc[0]
+        self.assertFalse(direction_row["metric_inference_eligible"])
+        self.assertEqual(direction_row["qc_status"], "insufficient_direction_defined_support")
+        self.assertTrue(np.isnan(direction_row["permutation_p_value"]))
+        self.assertTrue(np.isnan(direction_row["bh_fdr"]))
 
 
 class ReliabilityIntegrationTests(unittest.TestCase):
@@ -337,6 +501,7 @@ class ReliabilityIntegrationTests(unittest.TestCase):
             for name in (
                 "reliability_spot_results.csv",
                 "reliability_pair_summary.csv",
+                "reliability_metric_qc.csv",
                 "reliability_gene_coverage.csv",
                 "reliability_qc.json",
                 "cross_exclusivity_audit.csv",
@@ -361,7 +526,10 @@ class ReliabilityIntegrationTests(unittest.TestCase):
             self.assertEqual(summary_row["inference_level"], "spot_distribution_descriptive")
             self.assertFalse(summary_row["treatment_effect_claim_allowed"])
             metadata = json.loads((result.run_dir / "run_metadata.json").read_text(encoding="utf-8"))
-            self.assertEqual(metadata["reliability_layer"]["reliability_schema_version"], "v0.65-reliability-v2")
+            self.assertEqual(
+                metadata["reliability_layer"]["reliability_schema_version"],
+                "v0.65-reliability-v3-metric-qc",
+            )
             self.assertFalse(metadata["reliability_layer"]["H_V_reinterpreted_as_paired_pole_axes"])
             self.assertEqual(metadata["reliability_layer"]["balance_score_source"], "legacy_signed_cs")
             self.assertFalse(metadata["treatment_effect_claim_allowed"])

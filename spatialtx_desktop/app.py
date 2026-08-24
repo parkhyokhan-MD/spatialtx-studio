@@ -444,7 +444,7 @@ class SpatialTXDesktop(tk.Tk):
                 "inputs as canonical H5AD before Main Mapper analysis. The desktop edition also retains the fixed-cardinality "
                 "QUBO-inspired optimizer.\n\n"
                 "Operational regime labels are exploratory candidates and are not validated biological subtypes."
-                "\n\nv0.65-dev preserves the v0.6-beta Comparative Spatial Transition Analysis baseline for pairwise, paired-group, unpaired-group, "
+                "\n\nv0.65 preserves the v0.6-beta Comparative Spatial Transition Analysis baseline for pairwise, paired-group, unpaired-group, "
                 "and manifest-based sample-level comparisons. It does not perform direct spatial registration or "
                 "spot-wise subtraction. The Multi-Pair workflow now displays existing H_expr and V_expr definitions as "
                 "optional parallel observational context axes; they do not alter C/S/R, transition masks, or Type A/B/C "

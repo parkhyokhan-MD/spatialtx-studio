@@ -29,6 +29,64 @@ from .comparative.multi_pair import (
 from .reliability.models import ReliabilityConfig
 
 
+def _reliability_summary_for_display(table: pd.DataFrame) -> pd.DataFrame:
+    """Add human-readable metric support and N/A inference labels for the GUI."""
+
+    display = table.copy()
+    if display.empty:
+        return display
+
+    def is_true(value) -> bool:
+        return value is True or str(value).strip().casefold() == "true"
+
+    def support(row: pd.Series, metric: str) -> str:
+        parts: list[str] = []
+        for role in ("pre", "post"):
+            defined = pd.to_numeric(
+                pd.Series([row.get(f"{role}_{metric}_defined_n")]), errors="coerce"
+            ).iloc[0]
+            valid = pd.to_numeric(
+                pd.Series([row.get(f"{role}_{metric}_valid_input_n")]), errors="coerce"
+            ).iloc[0]
+            fraction = pd.to_numeric(
+                pd.Series([row.get(f"{role}_{metric}_defined_fraction")]), errors="coerce"
+            ).iloc[0]
+            if pd.notna(defined) and pd.notna(valid) and pd.notna(fraction):
+                parts.append(
+                    f"{role.title()} {int(defined)}/{int(valid)} ({float(fraction):.1%})"
+                )
+        return "; ".join(parts)
+
+    def inference(row: pd.Series, metric: str, export_name: str) -> str:
+        if not is_true(row.get(f"{metric}_inference_eligible", False)):
+            reason = str(row.get(f"{metric}_qc_reason", "insufficient_metric_support"))
+            return f"p: N/A — {reason}"
+        p_value = pd.to_numeric(
+            pd.Series([row.get(f"delta_{export_name}_permutation_p_value")]),
+            errors="coerce",
+        ).iloc[0]
+        fdr = pd.to_numeric(
+            pd.Series([row.get(f"delta_{export_name}_bh_fdr")]),
+            errors="coerce",
+        ).iloc[0]
+        if pd.isna(p_value):
+            return "p: N/A — eligible support but statistic undefined"
+        fdr_text = "N/A" if pd.isna(fdr) else f"{float(fdr):.5g}"
+        return f"p={float(p_value):.5g}; FDR={fdr_text}"
+
+    display["direction_defined_spots"] = display.apply(
+        lambda row: support(row, "direction"), axis=1
+    )
+    display["direction_inferential_test"] = display.apply(
+        lambda row: inference(row, "direction", "D"), axis=1
+    )
+    display["ca_defined_spots"] = display.apply(lambda row: support(row, "ca"), axis=1)
+    display["ca_inferential_test"] = display.apply(
+        lambda row: inference(row, "ca", "CA_fraction"), axis=1
+    )
+    return display
+
+
 class MultiPairAnalysisPanel(ttk.Frame):
     """One-to-six independent Pre/Post comparisons with a specimen comparability gate."""
 
@@ -76,7 +134,7 @@ class MultiPairAnalysisPanel(ttk.Frame):
         self.after(100, self._poll)
 
     def _build(self) -> None:
-        intro = ttk.LabelFrame(self, text="Paired Spatial Comparison — v0.65-dev", padding=9)
+        intro = ttk.LabelFrame(self, text="Paired Spatial Comparison — v0.65", padding=9)
         intro.pack(fill="x")
         ttk.Label(
             intro,
@@ -336,6 +394,8 @@ class MultiPairAnalysisPanel(ttk.Frame):
                 "Legacy signed Balance: preserved v0.6 C/S and B=C-S.  |  "
                 "Nonnegative Activity/Co-activation: separate pre-centering program abundance; no clipping or shift. "
                 "Validity requires both spot count and valid fraction; QC fail/warning reasons remain visible. "
+                "Direction and CA_fraction require at least 30 defined spots and 80% of valid Activity inputs "
+                "for inference; descriptive values remain visible when tests are not performed. "
                 "Descriptive spot-distribution comparison of unregistered slides. Not specimen-level inference "
                 "and not evidence of treatment effect."
             ),
@@ -430,6 +490,9 @@ class MultiPairAnalysisPanel(ttk.Frame):
             "direction remain explicitly invalid or undefined; values remain visible with QC status.\n"
             "• Bootstrap/permutation outputs compare unregistered spot distributions only. They are not specimen-level "
             "inference or evidence of treatment effect.\n"
+            "• Direction and CA_fraction inference requires metric-level PASS in both Pre and Post: at least 30 defined "
+            "spots and at least 80% of valid Activity inputs. A 50–79.9% fraction is CAUTION; below 50% or fewer than "
+            "30 spots is FAIL. Descriptive values remain visible, while unsupported CI/p/FDR remain N/A.\n"
             "• Continuous mode is primary. Classified mode requires explicit Activity and Direction thresholds and uses "
             "only low_activity, c_dominant_active, s_dominant_active, and active_coactivation_candidate.\n"
             "• Strict canonical gene overlap blocks the reliability run after writing its audit. Axis dependence is QC only; "
@@ -774,16 +837,23 @@ class MultiPairAnalysisPanel(ttk.Frame):
                 "comparison_value", "availability_status", "severity", "primary_for_classification", "reason",
             ],
         )
+        reliability_summary_display = _reliability_summary_for_display(
+            result.reliability_pair_summary
+        )
         self._fill_tree(
             self.axis_reliability_tree,
-            result.reliability_pair_summary,
+            reliability_summary_display,
             [
                 "pair_label", "axis", "balance_score_source", "balance_score_domain",
                 "activity_score_source", "activity_score_domain",
                 "pre_B", "post_B", "delta_B",
                 "pre_A", "post_A", "delta_A", "pre_D", "post_D", "delta_D",
+                "direction_defined_spots", "direction_qc_status",
+                "direction_inference_eligible", "direction_inferential_test",
                 "pre_CA_strength", "post_CA_strength", "delta_CA_strength",
                 "pre_CA_fraction", "post_CA_fraction", "delta_CA_fraction",
+                "ca_defined_spots", "ca_qc_status",
+                "ca_inference_eligible", "ca_inferential_test",
                 "pre_valid_input_fraction", "post_valid_input_fraction",
                 "pre_undefined_fraction", "post_undefined_fraction",
                 "pre_total_spot_count", "post_total_spot_count",
@@ -823,6 +893,7 @@ class MultiPairAnalysisPanel(ttk.Frame):
                 "sample_id", "axis_i", "axis_j", "dependence_type", "metric_i", "metric_j",
                 "pearson_correlation", "spearman_correlation", "valid_spot_count",
                 "missing_undefined_fraction", "permutation_p_value", "bh_fdr", "qc_status",
+                "metric_inference_eligible", "metric_inference_qc_reason",
                 "permutation_scope",
             ],
         )

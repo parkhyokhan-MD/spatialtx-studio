@@ -23,6 +23,8 @@ DEPENDENCE_COLUMNS = [
     "missing_undefined_fraction",
     "permutation_p_value",
     "bh_fdr",
+    "metric_inference_eligible",
+    "metric_inference_qc_reason",
     "qc_status",
     "permutation_scope",
 ]
@@ -88,6 +90,40 @@ def _permutation_p(
     return float((exceed + 1) / (int(config.permutation_iterations) + 1))
 
 
+def _direction_inference_support(
+    result: AxisReliabilityResult,
+    config: ReliabilityConfig,
+) -> tuple[bool, str]:
+    """Apply the same conservative sample-level Direction gate used by pair exports."""
+
+    total_n = int(len(result.valid_input))
+    valid_input_n = int(np.asarray(result.valid_input, dtype=bool).sum())
+    defined_n = int((
+        np.asarray(result.valid_input, dtype=bool)
+        & np.asarray(result.direction_defined, dtype=bool)
+        & np.isfinite(np.asarray(result.direction_D, dtype=float))
+    ).sum())
+    valid_input_fraction = float(valid_input_n / total_n) if total_n else 0.0
+    defined_fraction = float(defined_n / valid_input_n) if valid_input_n else 0.0
+    eligible = bool(
+        valid_input_n >= int(config.minimum_valid_spots)
+        and valid_input_fraction >= float(config.minimum_valid_fraction)
+        and defined_n >= int(config.minimum_valid_spots)
+        and defined_fraction >= float(config.minimum_valid_fraction)
+    )
+    if eligible:
+        reason = "ok"
+    elif valid_input_n < int(config.minimum_valid_spots):
+        reason = "upstream_activity_insufficient_valid_spots"
+    elif valid_input_fraction < float(config.minimum_valid_fraction):
+        reason = "upstream_activity_low_valid_fraction"
+    elif defined_n < int(config.minimum_valid_spots):
+        reason = "defined_spot_count_below_minimum"
+    else:
+        reason = "defined_fraction_below_pass_threshold"
+    return eligible, reason
+
+
 def compute_axis_dependence(
     axes: Mapping[str, AxisReliabilityResult],
     config: ReliabilityConfig | Mapping | None = None,
@@ -110,22 +146,60 @@ def compute_axis_dependence(
         raise ValueError("permutation_groups must have one value per spot.")
 
     rows: list[dict] = []
-    comparisons: list[tuple[str, str, str, str, str, np.ndarray, np.ndarray]] = []
+    comparisons: list[
+        tuple[
+            str,
+            str,
+            str,
+            str,
+            str,
+            np.ndarray,
+            np.ndarray,
+            AxisReliabilityResult,
+            AxisReliabilityResult,
+        ]
+    ] = []
     for axis_i, axis_j in combinations(sorted(axes), 2):
         first, second = axes[axis_i], axes[axis_j]
         comparisons.extend((
-            (axis_i, axis_j, "direction_dependence", "direction_D", "direction_D", first.direction_D, second.direction_D),
-            (axis_i, axis_j, "activity_dependence", "activity_A", "activity_A", first.activity_A, second.activity_A),
-            (axis_i, axis_j, "balance_dependence", "balance_B", "balance_B", first.balance_B, second.balance_B),
-            (axis_i, axis_j, "cross_dependence", "direction_D", "activity_A", first.direction_D, second.activity_A),
-            (axis_j, axis_i, "cross_dependence", "direction_D", "activity_A", second.direction_D, first.activity_A),
+            (axis_i, axis_j, "direction_dependence", "direction_D", "direction_D", first.direction_D, second.direction_D, first, second),
+            (axis_i, axis_j, "activity_dependence", "activity_A", "activity_A", first.activity_A, second.activity_A, first, second),
+            (axis_i, axis_j, "balance_dependence", "balance_B", "balance_B", first.balance_B, second.balance_B, first, second),
+            (axis_i, axis_j, "cross_dependence", "direction_D", "activity_A", first.direction_D, second.activity_A, first, second),
+            (axis_j, axis_i, "cross_dependence", "direction_D", "activity_A", second.direction_D, first.activity_A, second, first),
         ))
-    for index, (axis_i, axis_j, kind, metric_i, metric_j, left, right) in enumerate(comparisons):
+    for index, (
+        axis_i,
+        axis_j,
+        kind,
+        metric_i,
+        metric_j,
+        left,
+        right,
+        result_i,
+        result_j,
+    ) in enumerate(comparisons):
         pearson, spearman, valid = _correlations(left, right)
         rng = np.random.default_rng(np.random.SeedSequence([int(cfg.seed), index]))
-        p_value = _permutation_p(left, right, valid, cfg, rng, groups)
+        support_checks: list[tuple[bool, str]] = []
+        if metric_i == "direction_D":
+            support_checks.append(_direction_inference_support(result_i, cfg))
+        if metric_j == "direction_D":
+            support_checks.append(_direction_inference_support(result_j, cfg))
+        metric_inference_eligible = all(check[0] for check in support_checks)
+        support_reasons = [reason for eligible, reason in support_checks if not eligible]
+        metric_inference_qc_reason = (
+            "ok" if metric_inference_eligible else ";".join(dict.fromkeys(support_reasons))
+        )
+        p_value = (
+            _permutation_p(left, right, valid, cfg, rng, groups)
+            if metric_inference_eligible
+            else np.nan
+        )
         valid_count = int(valid.sum())
-        if valid_count < int(cfg.minimum_valid_spots):
+        if not metric_inference_eligible:
+            qc_status = "insufficient_direction_defined_support"
+        elif valid_count < int(cfg.minimum_valid_spots):
             qc_status = "insufficient_valid_spots"
         elif not np.isfinite(pearson) or not np.isfinite(spearman):
             qc_status = "undefined_constant_or_invalid"
@@ -146,6 +220,8 @@ def compute_axis_dependence(
             "missing_undefined_fraction": float(1.0 - valid_count / n_spots) if n_spots else np.nan,
             "permutation_p_value": p_value,
             "bh_fdr": np.nan,
+            "metric_inference_eligible": metric_inference_eligible,
+            "metric_inference_qc_reason": metric_inference_qc_reason,
             "qc_status": qc_status,
             "permutation_scope": "within_supplied_groups" if groups is not None else "within_sample_global",
         })

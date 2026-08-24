@@ -9,9 +9,37 @@ import pandas as pd
 from spatialtx_desktop.app import SpatialTXDesktop
 from spatialtx_desktop.comparative.models import ComparativeRunResult
 from spatialtx_desktop.comparative_ui import ComparativeAnalysisPanel, _sample_display_labels
+from spatialtx_desktop.multi_pair_ui import _reliability_summary_for_display
 
 
 class ComparativeUITests(unittest.TestCase):
+    def test_reliability_metric_qc_displays_support_and_na_instead_of_nan(self) -> None:
+        display = _reliability_summary_for_display(pd.DataFrame([{
+            "pre_direction_defined_n": 20,
+            "pre_direction_valid_input_n": 100,
+            "pre_direction_defined_fraction": 0.20,
+            "post_direction_defined_n": 19,
+            "post_direction_valid_input_n": 100,
+            "post_direction_defined_fraction": 0.19,
+            "direction_inference_eligible": False,
+            "direction_qc_reason": "Pre=defined_spot_count_below_minimum",
+            "pre_ca_defined_n": 20,
+            "pre_ca_valid_input_n": 100,
+            "pre_ca_defined_fraction": 0.20,
+            "post_ca_defined_n": 19,
+            "post_ca_valid_input_n": 100,
+            "post_ca_defined_fraction": 0.19,
+            "ca_inference_eligible": False,
+            "ca_qc_reason": "Pre=defined_spot_count_below_minimum",
+        }])).iloc[0]
+        self.assertEqual(
+            display["direction_defined_spots"],
+            "Pre 20/100 (20.0%); Post 19/100 (19.0%)",
+        )
+        self.assertIn("p: N/A", display["direction_inferential_test"])
+        self.assertIn("p: N/A", display["ca_inferential_test"])
+        self.assertNotIn("NaN", display["direction_inferential_test"])
+
     def test_pairwise_sample_labels_keep_filename_visible_and_disambiguate_duplicates(self) -> None:
         paths = [
             Path("C:/a/very/long/directory/reference/sample.h5ad"),
@@ -39,7 +67,7 @@ class ComparativeUITests(unittest.TestCase):
             self.assertIn("Main Mapper", labels)
             self.assertIn("Comparative Analysis", labels)
             self.assertIsInstance(app.comparative_analysis_panel, ComparativeAnalysisPanel)
-            self.assertEqual(app.title(), "SpatialTX Studio Desktop v0.65-dev")
+            self.assertEqual(app.title(), "SpatialTX Studio Desktop v0.65")
             self.assertIsNotNone(app._app_icon_photo)
             self.assertIn("png", app.app_icon_status)
             self.assertFalse(app.comparative_analysis_panel.busy)
@@ -65,6 +93,8 @@ class ComparativeUITests(unittest.TestCase):
             self.assertIn("cannot by itself produce Low", rules)
             self.assertIn("do not establish treatment response", rules)
             self.assertIn("OPTIONAL v0.65 RELIABILITY LAYER", rules)
+            self.assertIn("at least 30 defined", rules)
+            self.assertIn("unsupported CI/p/FDR remain N/A", rules)
             self.assertFalse(rules_panel._reliability_config().enabled)
             rules_panel.reliability_layer_var.set(True)
             rules_panel.reliability_classification_var.set(True)

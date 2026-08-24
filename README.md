@@ -1,14 +1,16 @@
-# SpatialTX Studio Desktop v0.65-dev
+# SpatialTX Studio Desktop v0.65
 
-> Development build preserving the public v0.6-beta baseline. Exploratory research use only.
+> Public research release preserving the v0.6-beta baseline. Exploratory research use only.
 
 SpatialTX Studio Desktop is an open-source research workspace for exploratory spatial transcriptomics analysis. It provides a local Python desktop application and command-line workflow for `.h5ad` inputs.
 
 This software is a research prototype. It is not intended for diagnosis, treatment selection, or clinical decision-making. Outputs are exploratory and require independent review and validation.
 
-## What is new in v0.65-dev
+## What is new in v0.65
 
-v0.65-dev adds a **default-off, additive Multi-axis Reliability Layer** to Multi-Pair Pre/Post. Legacy Balance reads the existing signed v0.6 C/S arrays unchanged. Activity/Direction/Co-activation use a separate pre-z-score nonnegative program mean from the same genes and missing-gene policy. Neither source overwrites C/S/R, spatial masks, H/V context, comparability, Type A/B/C, or established output files.
+v0.65 adds a **default-off, additive Multi-axis Reliability Layer** to Multi-Pair Pre/Post. Legacy Balance reads the existing signed v0.6 C/S arrays unchanged. Activity/Direction/Co-activation use a separate pre-z-score nonnegative program mean from the same genes and missing-gene policy. Neither source overwrites C/S/R, spatial masks, H/V context, comparability, Type A/B/C, or established output files.
+
+Direction and CA_fraction now have a separate metric-level support gate: both Pre and Post require at least 30 defined spots and at least 80% of valid Activity inputs before CI/p/FDR are produced. Descriptive values remain visible when support is insufficient, while unavailable inference stays `NaN` in exports and `N/A` in the GUI. See [the metric-level QC audit](docs/RELIABILITY_METRIC_LEVEL_QC_V065.md).
 
 - Continuous Balance, Activity, Direction, co-activation strength, and co-activation fraction sidecars.
 - Explicit negative/non-finite/zero-activity handling; undefined values remain `NA`.
@@ -151,6 +153,20 @@ spatialtx compare --manifest examples/comparative_manifest_example.csv --mode pa
 
 Required output files include sample metrics, delta metrics, group statistics, operational regime transitions, warnings, run manifest, parameter JSON, HTML/PDF reports, figures, and logs. Statistical significance alone is not evidence of biological or clinical significance.
 
+## v0.65 screenshots
+
+Multi-Pair Reliability workspace after the Direction/CA_fraction metric-level QC correction. Defined-spot support, PASS/CAUTION/FAIL status, inferential eligibility, and `p: N/A` reasons remain visible beside descriptive values:
+
+![SpatialTX Studio v0.65 Reliability metric-level QC overview](docs/screenshots/spatialtx_studio_v0_65_reliability_metric_qc_overview.png)
+
+Score-domain audit separating preserved signed legacy Balance inputs from the nonnegative Activity source used by Activity, Direction, and Co-activation:
+
+![SpatialTX Studio v0.65 score-domain audit](docs/screenshots/spatialtx_studio_v0_65_score_domain_audit.png)
+
+Example H/V expression-context joint-state map. H/V are observational context fields and do not modify C/S/R, transition masks, or Type A/B/C candidate labels:
+
+![SpatialTX Studio v0.65 H/V joint-state map](docs/screenshots/spatialtx_studio_v0_65_spatial_context_joint_state.png)
+
 ## v0.6-beta screenshots
 
 These screenshots were captured during final v0.6 development testing and may show the internal `v0.6-dev-HV-validation` build label. The published source identifies itself as `v0.6-beta`.
@@ -216,7 +232,7 @@ python advanced_cli.py --module interaction --input sample.h5ad --output results
 python advanced_cli.py --module spatial_graph --input sample.h5ad --output results --graph-method radius --permutations 999 --seed 20260713
 ```
 
-See [RELEASE_NOTES_v0_6_beta.md](RELEASE_NOTES_v0_6_beta.md) for this release, [RELEASE_NOTES_v0_6_dev_HV_validation.md](RELEASE_NOTES_v0_6_dev_HV_validation.md) and [RELEASE_NOTES_v0_6_dev.md](RELEASE_NOTES_v0_6_dev.md) for development lineage, and [RELEASE_NOTES_v0_5_5_beta.md](RELEASE_NOTES_v0_5_5_beta.md) for the preserved Multi-Pair foundation.
+See [RELEASE_NOTES_v0_65.md](RELEASE_NOTES_v0_65.md) for the current public release, [RELEASE_NOTES_v0_6_beta.md](RELEASE_NOTES_v0_6_beta.md) for the public baseline, [RELEASE_NOTES_v0_6_dev_HV_validation.md](RELEASE_NOTES_v0_6_dev_HV_validation.md) and [RELEASE_NOTES_v0_6_dev.md](RELEASE_NOTES_v0_6_dev.md) for development lineage, and [RELEASE_NOTES_v0_5_5_beta.md](RELEASE_NOTES_v0_5_5_beta.md) for the preserved Multi-Pair foundation.
 
 ## CLI quick start
 

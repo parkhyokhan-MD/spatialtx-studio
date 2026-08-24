@@ -39,6 +39,26 @@ BALANCE_REGRESSION_FIELDS = (
     "post_S_gene_coverage",
 )
 
+METRIC_QC_REPORT_FIELDS = (
+    "pair_label",
+    "pre_valid_spot_count",
+    "post_valid_spot_count",
+    "pre_direction_defined_n",
+    "post_direction_defined_n",
+    "pre_direction_defined_fraction",
+    "post_direction_defined_fraction",
+    "direction_qc_status",
+    "direction_inference_eligible",
+    "direction_qc_reason",
+    "pre_ca_defined_n",
+    "post_ca_defined_n",
+    "pre_ca_defined_fraction",
+    "post_ca_defined_fraction",
+    "ca_qc_status",
+    "ca_inference_eligible",
+    "ca_qc_reason",
+)
+
 
 def _one_match(data_root: Path, pattern: str) -> Path:
     matches = sorted(data_root.glob(pattern))
@@ -158,6 +178,51 @@ def _write_reliability_regression_artifacts(
     return report
 
 
+def _write_metric_qc_validation_artifacts(
+    run_dir: Path,
+    summary: pd.DataFrame,
+) -> tuple[Path, Path, dict]:
+    """Write the predefined Direction/CA_fraction six-pair QC audit."""
+
+    missing = [column for column in METRIC_QC_REPORT_FIELDS if column not in summary]
+    if missing:
+        raise RuntimeError(
+            "Metric-level QC summary is missing required fields: " + ", ".join(missing)
+        )
+    table = summary.loc[:, METRIC_QC_REPORT_FIELDS].copy()
+    csv_path = run_dir / "six_pair_direction_ca_metric_qc.csv"
+    table.to_csv(csv_path, index=False, encoding="utf-8-sig", na_rep="NA")
+    report = {
+        "status": "PASS",
+        "minimum_defined_spots": 30,
+        "pass_defined_fraction": 0.80,
+        "caution_defined_fraction": 0.50,
+        "defined_fraction_denominator": "valid_input_n",
+        "inference_eligibility": (
+            "PASS in Pre and Post; each defined_n >= 30 and defined_fraction >= 0.80"
+        ),
+        "ineligible_inference_value": "NaN/null for bootstrap CI, permutation p, and BH-FDR",
+        "direction_pair_qc_counts": (
+            table["direction_qc_status"].astype(str).value_counts().sort_index().to_dict()
+        ),
+        "ca_pair_qc_counts": (
+            table["ca_qc_status"].astype(str).value_counts().sort_index().to_dict()
+        ),
+        "direction_inference_eligible_pair_count": int(
+            table["direction_inference_eligible"].astype(bool).sum()
+        ),
+        "ca_inference_eligible_pair_count": int(
+            table["ca_inference_eligible"].astype(bool).sum()
+        ),
+        "records": table.to_dict(orient="records"),
+    }
+    json_path = run_dir / "six_pair_direction_ca_metric_qc.json"
+    json_path.write_text(
+        json.dumps(json_safe(report), indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+    return csv_path, json_path, report
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run the preserved six-pair BTC regression set.")
     parser.add_argument("--data-root", required=True, type=Path)
@@ -247,7 +312,43 @@ def main() -> int:
             result.reliability_pair_summary,
             baseline,
         )
+        metric_csv, metric_json, metric_report = _write_metric_qc_validation_artifacts(
+            result.run_dir,
+            result.reliability_pair_summary,
+        )
+        qc_fixed_path = result.run_dir / "reliability_qc_fixed.json"
+        qc_fixed = json.loads(qc_fixed_path.read_text(encoding="utf-8"))
+        qc_fixed["six_pair_direction_ca_metric_qc"] = metric_report
+        qc_output_files = qc_fixed.get("output_files", [])
+        for name in (metric_csv.name, metric_json.name):
+            if name not in qc_output_files:
+                qc_output_files.append(name)
+        qc_fixed["output_files"] = qc_output_files
+        qc_fixed_path.write_text(
+            json.dumps(json_safe(qc_fixed), indent=2, ensure_ascii=False), encoding="utf-8"
+        )
+        metadata_path = result.run_dir / "run_metadata.json"
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        metadata["six_pair_direction_ca_metric_qc"] = metric_report
+        output_files = metadata.get("reliability_layer", {}).get("output_files", [])
+        for name in (metric_csv.name, metric_json.name):
+            if name not in output_files:
+                output_files.append(name)
+        metadata["reliability_layer"]["output_files"] = output_files
+        metadata_path.write_text(
+            json.dumps(json_safe(metadata), indent=2, ensure_ascii=False), encoding="utf-8"
+        )
         print(f"Six-pair Balance regression: {report['status']}")
+        print(
+            "Six-pair Direction QC: "
+            f"{metric_report['direction_pair_qc_counts']} | "
+            f"eligible={metric_report['direction_inference_eligible_pair_count']}/6"
+        )
+        print(
+            "Six-pair CA_fraction QC: "
+            f"{metric_report['ca_pair_qc_counts']} | "
+            f"eligible={metric_report['ca_inference_eligible_pair_count']}/6"
+        )
         if report["status"] != "PASS":
             raise RuntimeError(
                 "Six-pair Balance regression failed; the fixed reliability result is not approved."

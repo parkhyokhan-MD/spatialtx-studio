@@ -111,7 +111,7 @@ def _write_csv(path: Path, table: pd.DataFrame, required_columns: list[str]) -> 
 
 def _common_metadata(config: ComparativeConfig, effective_mode: str, timestamp: str, commit: str) -> dict:
     return {
-        "spatialtx_version": __version__,
+        "spatialtx_version": f"v{__version__}",
         "analysis_timestamp": timestamp,
         "comparison_mode": config.mode,
         "effective_statistical_design": effective_mode,

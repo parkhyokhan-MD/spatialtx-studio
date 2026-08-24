@@ -40,7 +40,7 @@ Desktop Main Mapper and Desktop Comparative Analysis both route through `workflo
 - `activity_score_source=selected_gene_program_mean_after_log1p_count_like` for the validation inputs
 - `activity_score_domain=nonnegative`
 - `activity_source_version=v0.65-nonnegative-program-mean-v1`
-- `reliability_schema_version=v0.65-reliability-v2`
+- `reliability_schema_version=v0.65-reliability-v2` (historical score-domain-fix schema; subsequently revised to `v0.65-reliability-v3-metric-qc` when the Direction/CA_fraction support gate was added)
 
 Legacy `B=C_legacy-S_legacy`, `pre_B`, `post_B`, and `delta_B` are unchanged. Reliability v2 computes:
 

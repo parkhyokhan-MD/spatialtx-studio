@@ -1,8 +1,8 @@
-# SpatialTX Studio Desktop v0.65-dev
+# SpatialTX Studio Desktop v0.65
 
 > Development build preserving the public v0.6-beta baseline. Exploratory research use only.
 
-v0.65-dev adds an optional, default-off **Multi-axis Reliability Layer** to Multi-Pair Pre/Post. Legacy Balance preserves signed v0.6 C/S, while Activity/Direction/Co-activation use a separate pre-z-score nonnegative program abundance from the same genes. The UI exposes source/domain labels, valid counts/fractions, QC reasons, score-domain diagnostics, and descriptive-only inference warnings without changing established v0.6 result files. See [the v0.65 guide](docs/RELIABILITY_LAYER_V065.md).
+v0.65 adds an optional, default-off **Multi-axis Reliability Layer** to Multi-Pair Pre/Post. Legacy Balance preserves signed v0.6 C/S, while Activity/Direction/Co-activation use a separate pre-z-score nonnegative program abundance from the same genes. Direction and CA_fraction inference now additionally requires metric-level PASS in both Pre and Post (at least 30 defined spots and 80% of valid Activity inputs); descriptive values remain visible and unavailable p/FDR values display as N/A. The UI exposes source/domain labels, valid counts/fractions, QC reasons, score-domain diagnostics, and descriptive-only inference warnings without changing established v0.6 result files. See [the v0.65 guide](docs/RELIABILITY_LAYER_V065.md) and [metric-level QC audit](docs/RELIABILITY_METRIC_LEVEL_QC_V065.md).
 
 v0.6-beta adds **Multiaxial Comparative Analysis + QC-aware paired interpretation** and an **H/V computational and audit validation layer**: effective genes, per-sample coverage/status, raw upper-tail summaries, within-pair pooled high-context fractions, and local high-context fractions. Import / Convert, Main Mapper, Single Pair Comparative Analysis, Advanced Analysis, graph tools, viewer, and existing output contracts remain available.
 
@@ -11,9 +11,25 @@ The v0.4 line adds an optional **Spatial Graph & Neighborhood — Experimental**
 Windows desktop research prototype for the main `.h5ad` SpatialTX workflow.
 
 - Creator: **Hyokhan Park, MD**
-- Version: **v0.65-dev**
+- Version: **v0.65**
 - Build date: **2026-08-19**
 - Edition: **Development — additive Reliability Layer**
+
+## v0.65 screenshots
+
+Reliability metric-level QC overview with explicit support and inferential eligibility:
+
+![SpatialTX Studio v0.65 Reliability metric-level QC overview](docs/screenshots/spatialtx_studio_v0_65_reliability_metric_qc_overview.png)
+
+Signed legacy Balance versus nonnegative Activity score-domain audit:
+
+![SpatialTX Studio v0.65 score-domain audit](docs/screenshots/spatialtx_studio_v0_65_score_domain_audit.png)
+
+Example observational H/V expression-context joint-state map:
+
+![SpatialTX Studio v0.65 H/V joint-state map](docs/screenshots/spatialtx_studio_v0_65_spatial_context_joint_state.png)
+
+These screenshots are documentation examples. H/V remain observational, and Reliability inference remains descriptive spot-distribution analysis of unregistered slides rather than specimen-level or clinical inference.
 
 The v0.6 screenshots were captured during final development testing and may show the internal `v0.6-dev-HV-validation` label. The published source identifies itself as `v0.6-beta`.
 

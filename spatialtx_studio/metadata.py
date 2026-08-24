@@ -1,7 +1,7 @@
 APP_NAME_KO = "SpatialTX Studio"
 APP_NAME_EN = "SpatialTX Studio"
 APP_SHORT_NAME = "SpatialTX Studio"
-VERSION = "0.65-dev"
+VERSION = "0.65"
 DEVELOPER = "Hyokhan Park, MD"
 MODULE_NAME = "SpatialTX"
 MODULE_FULL_NAME = "SpatialTX C/S balance-field and transition-zone metrics"

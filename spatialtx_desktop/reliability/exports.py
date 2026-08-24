@@ -113,6 +113,136 @@ def _sample_validity(
     return status, reason, count, fraction
 
 
+def _metric_sample_qc(
+    result: AxisReliabilityResult,
+    config: ReliabilityConfig,
+    *,
+    metric: str,
+    score_validity: str,
+) -> dict:
+    """Evaluate support for one derived metric independently of pair validity."""
+
+    if metric == "direction":
+        criterion = np.asarray(result.direction_defined, dtype=bool)
+        values = np.asarray(result.direction_D, dtype=float)
+    elif metric == "ca":
+        criterion = np.asarray(result.ca_defined, dtype=bool)
+        values = np.asarray(result.ca_fraction, dtype=float)
+    else:
+        raise ValueError(f"Unsupported metric-level QC target: {metric}")
+
+    valid_input = np.asarray(result.valid_input, dtype=bool)
+    criterion_count = int((valid_input & criterion).sum())
+    defined = valid_input & criterion & np.isfinite(values)
+    defined_n = int(defined.sum())
+    valid_input_n = int(valid_input.sum())
+    defined_fraction = float(defined_n / valid_input_n) if valid_input_n else 0.0
+
+    reasons: list[str] = []
+    if criterion_count > defined_n:
+        status = "FAIL"
+        reasons.append("nonfinite_metric")
+    elif defined_n == 0:
+        status = "FAIL"
+        reasons.append("no_defined_spots")
+    elif defined_n < int(config.minimum_valid_spots):
+        status = "FAIL"
+        reasons.append("defined_spot_count_below_minimum")
+    elif defined_fraction < float(config.warning_valid_fraction):
+        status = "FAIL"
+        reasons.append("defined_fraction_below_minimum")
+    elif defined_fraction < float(config.minimum_valid_fraction):
+        status = "CAUTION"
+        reasons.append("defined_fraction_below_pass_threshold")
+    else:
+        status = "PASS"
+        reasons.append("ok")
+
+    # Pair/input validity and metric support are separate gates.  The final
+    # metric status conservatively reflects both, while counts and fractions
+    # above remain the direct support measurements for this metric.
+    if str(score_validity).startswith("qc_fail_"):
+        status = "FAIL"
+        if "upstream_activity_invalid" not in reasons:
+            reasons.append("upstream_activity_invalid")
+    elif score_validity == "warning_low_valid_fraction" and status == "PASS":
+        status = "CAUTION"
+        reasons.append("upstream_activity_low_valid_fraction")
+
+    reason = ";".join(dict.fromkeys(reasons))
+    return {
+        f"{metric}_defined_n": defined_n,
+        f"{metric}_valid_input_n": valid_input_n,
+        f"{metric}_defined_fraction": defined_fraction,
+        f"{metric}_qc_status": status,
+        f"{metric}_inference_eligible": status == "PASS",
+        f"{metric}_qc_reason": reason,
+    }
+
+
+def build_metric_qc_table(
+    pair_label: str,
+    pre: AxisReliabilityResult,
+    post: AxisReliabilityResult,
+    config: ReliabilityConfig | Mapping | None = None,
+) -> pd.DataFrame:
+    """Return one auditable Direction/CA support row per sample role."""
+
+    cfg = ReliabilityConfig.from_value(config)
+    cfg.validate()
+    rows: list[dict] = []
+    for sample_role, result in (("Pre", pre), ("Post", post)):
+        score_validity, score_reason, _, _ = _sample_validity(result, cfg)
+        direction_qc = _metric_sample_qc(
+            result,
+            cfg,
+            metric="direction",
+            score_validity=score_validity,
+        )
+        ca_qc = _metric_sample_qc(
+            result,
+            cfg,
+            metric="ca",
+            score_validity=score_validity,
+        )
+        rows.append({
+            "pair_label": str(pair_label),
+            "axis": result.axis,
+            "sample_role": sample_role,
+            "sample_score_validity": score_validity,
+            "sample_score_validity_reason": score_reason,
+            "valid_input_n": int(result.valid_input.sum()),
+            **direction_qc,
+            **ca_qc,
+            "direction_ca_share_defined_mask": bool(
+                np.array_equal(result.direction_defined, result.ca_defined)
+            ),
+            "defined_fraction_denominator": "valid_input_n",
+            "minimum_defined_spots": int(cfg.minimum_valid_spots),
+            "pass_defined_fraction": float(cfg.minimum_valid_fraction),
+            "caution_defined_fraction": float(cfg.warning_valid_fraction),
+            "direction_descriptive_value": _median(result.direction_D),
+            "ca_fraction_descriptive_value": _median(result.ca_fraction),
+        })
+    return pd.DataFrame(rows)
+
+
+def _combined_metric_qc(metric_qc: pd.DataFrame, metric: str) -> tuple[str, bool, str]:
+    statuses = metric_qc[f"{metric}_qc_status"].astype(str).tolist()
+    if "FAIL" in statuses:
+        status = "FAIL"
+    elif "CAUTION" in statuses:
+        status = "CAUTION"
+    else:
+        status = "PASS"
+    eligible = bool(metric_qc[f"{metric}_inference_eligible"].astype(bool).all())
+    reasons = " | ".join(
+        f"{row.sample_role}={getattr(row, f'{metric}_qc_reason')}"
+        for row in metric_qc.itertuples(index=False)
+    )
+    return status, eligible, reasons
+
+
 def _shared_source(pre_value: str, post_value: str) -> str:
     return pre_value if pre_value == post_value else f"Pre={pre_value}; Post={post_value}"
 
@@ -183,6 +313,15 @@ def build_pair_summary(
     else:
         pair_validity = "valid"
     pair_reason = f"Pre: {pre_reason} | Post: {post_reason}"
+    metric_qc = build_metric_qc_table(pair_label, pre, post, cfg)
+    pre_metric_qc = metric_qc.loc[metric_qc["sample_role"].eq("Pre")].iloc[0]
+    post_metric_qc = metric_qc.loc[metric_qc["sample_role"].eq("Post")].iloc[0]
+    direction_qc_status, direction_inference_eligible, direction_qc_reason = (
+        _combined_metric_qc(metric_qc, "direction")
+    )
+    ca_qc_status, ca_inference_eligible, ca_qc_reason = _combined_metric_qc(
+        metric_qc, "ca"
+    )
     row: dict = {
         "pair_label": pair_label,
         "axis": pre.axis,
@@ -231,6 +370,47 @@ def build_pair_summary(
         "pair_validity_reason": pair_reason,
         "pre_direction_defined_spot_count": int(pre.direction_defined.sum()),
         "post_direction_defined_spot_count": int(post.direction_defined.sum()),
+        "pre_direction_defined_n": int(pre_metric_qc["direction_defined_n"]),
+        "post_direction_defined_n": int(post_metric_qc["direction_defined_n"]),
+        "pre_direction_valid_input_n": int(pre_metric_qc["direction_valid_input_n"]),
+        "post_direction_valid_input_n": int(post_metric_qc["direction_valid_input_n"]),
+        "pre_direction_defined_fraction": float(pre_metric_qc["direction_defined_fraction"]),
+        "post_direction_defined_fraction": float(post_metric_qc["direction_defined_fraction"]),
+        "pre_direction_qc_status": str(pre_metric_qc["direction_qc_status"]),
+        "post_direction_qc_status": str(post_metric_qc["direction_qc_status"]),
+        "pre_direction_inference_eligible": bool(pre_metric_qc["direction_inference_eligible"]),
+        "post_direction_inference_eligible": bool(post_metric_qc["direction_inference_eligible"]),
+        "pre_direction_qc_reason": str(pre_metric_qc["direction_qc_reason"]),
+        "post_direction_qc_reason": str(post_metric_qc["direction_qc_reason"]),
+        "direction_qc_status": direction_qc_status,
+        "direction_inference_eligible": direction_inference_eligible,
+        "direction_qc_reason": direction_qc_reason,
+        "pre_ca_defined_n": int(pre_metric_qc["ca_defined_n"]),
+        "post_ca_defined_n": int(post_metric_qc["ca_defined_n"]),
+        "pre_ca_valid_input_n": int(pre_metric_qc["ca_valid_input_n"]),
+        "post_ca_valid_input_n": int(post_metric_qc["ca_valid_input_n"]),
+        "pre_ca_defined_fraction": float(pre_metric_qc["ca_defined_fraction"]),
+        "post_ca_defined_fraction": float(post_metric_qc["ca_defined_fraction"]),
+        "pre_ca_qc_status": str(pre_metric_qc["ca_qc_status"]),
+        "post_ca_qc_status": str(post_metric_qc["ca_qc_status"]),
+        "pre_ca_inference_eligible": bool(pre_metric_qc["ca_inference_eligible"]),
+        "post_ca_inference_eligible": bool(post_metric_qc["ca_inference_eligible"]),
+        "pre_ca_qc_reason": str(pre_metric_qc["ca_qc_reason"]),
+        "post_ca_qc_reason": str(post_metric_qc["ca_qc_reason"]),
+        "ca_qc_status": ca_qc_status,
+        "ca_inference_eligible": ca_inference_eligible,
+        "ca_qc_reason": ca_qc_reason,
+        "direction_defined_condition": "valid_input & activity_A > epsilon & finite(direction_D)",
+        "ca_defined_condition": "valid_input & activity_A > epsilon & finite(CA_fraction)",
+        "direction_ca_share_defined_mask": bool(
+            np.array_equal(pre.direction_defined, pre.ca_defined)
+            and np.array_equal(post.direction_defined, post.ca_defined)
+        ),
+        "metric_defined_fraction_denominator": "valid_input_n",
+        "metric_inference_eligibility_rule": (
+            "Pre and Post qc_status PASS; each defined_n >= minimum_valid_spots and "
+            "defined_fraction >= minimum_valid_fraction"
+        ),
     }
     row["pre_score_validity"] = pre_validity
     row["post_score_validity"] = post_validity
@@ -256,18 +436,30 @@ def build_pair_summary(
         offset = _stable_seed_offset(pair_label, pre.axis, metric_name)
         seed_sequence = np.random.SeedSequence([int(cfg.seed), offset])
         bootstrap_seed, permutation_seed = seed_sequence.spawn(2)
-        ci_low, ci_high = _bootstrap_delta_ci(
-            pre_values,
-            post_values,
-            int(cfg.bootstrap_iterations),
-            np.random.default_rng(bootstrap_seed),
+        metric_inference_eligible = (
+            direction_inference_eligible
+            if metric_name == "D"
+            else ca_inference_eligible
+            if metric_name == "CA_fraction"
+            else True
         )
-        p_value = _label_permutation_p(
-            pre_values,
-            post_values,
-            int(cfg.permutation_iterations),
-            np.random.default_rng(permutation_seed),
-        )
+        if metric_inference_eligible:
+            ci_low, ci_high = _bootstrap_delta_ci(
+                pre_values,
+                post_values,
+                int(cfg.bootstrap_iterations),
+                np.random.default_rng(bootstrap_seed),
+            )
+            p_value = _label_permutation_p(
+                pre_values,
+                post_values,
+                int(cfg.permutation_iterations),
+                np.random.default_rng(permutation_seed),
+            )
+        else:
+            # Unsupported inference remains missing.  Do not pass a fabricated
+            # p=1 through BH-FDR; descriptive medians and deltas stay available.
+            ci_low, ci_high, p_value = np.nan, np.nan, np.nan
         row.update({
             f"pre_{metric_name}": pre_median,
             f"post_{metric_name}": post_median,
@@ -277,11 +469,17 @@ def build_pair_summary(
             f"delta_{metric_name}_permutation_p_value": p_value,
             f"delta_{metric_name}_bh_fdr": np.nan,
         })
+        if metric_name in {"D", "CA_fraction"}:
+            qc_prefix = "direction" if metric_name == "D" else "ca"
+            row[f"delta_{metric_name}_inference_eligible"] = metric_inference_eligible
+            row[f"delta_{metric_name}_inference_qc_status"] = row[f"{qc_prefix}_qc_status"]
+            row[f"delta_{metric_name}_inference_qc_reason"] = row[f"{qc_prefix}_qc_reason"]
         p_columns.append(f"delta_{metric_name}_permutation_p_value")
     q_values = bh_adjust([row[column] for column in p_columns])
     for metric_name, q_value in zip(RELIABILITY_PAIR_METRICS, q_values):
         row[f"delta_{metric_name}_bh_fdr"] = q_value
-    row["delta_B_reliability_v2_bh_fdr"] = row["delta_B_bh_fdr"]
+    row["delta_B_reliability_v3_bh_fdr"] = row["delta_B_bh_fdr"]
+    row["delta_B_reliability_v2_bh_fdr"] = row["delta_B_reliability_v3_bh_fdr"]
     row["delta_B_bh_fdr"] = _legacy_balance_bh_fdr_compatibility(
         pair_label,
         pre,
@@ -293,7 +491,10 @@ def build_pair_summary(
         "existing multiplicity field, never as the v2 Activity source"
     )
     row["delta_B_reliability_v2_bh_fdr_scope"] = (
-        "v0.65-v2 source-correct B/A/D/CA descriptive metric family"
+        "compatibility alias of the v0.65-v3 source-correct, metric-QC-gated family"
+    )
+    row["delta_B_reliability_v3_bh_fdr_scope"] = (
+        "v0.65-v3 source-correct family; finite eligible p-values only; ineligible D/CA_fraction remain NaN"
     )
 
     pre_summary, post_summary = summarize_axis(pre), summarize_axis(post)
@@ -452,6 +653,7 @@ def write_reliability_sidecars(
     files = [
         _write_csv(root / "reliability_spot_results.csv", result.spot_results),
         _write_csv(root / "reliability_pair_summary.csv", result.pair_summary),
+        _write_csv(root / "reliability_metric_qc.csv", result.metric_qc),
         _write_csv(root / "reliability_gene_coverage.csv", result.gene_coverage),
         _write_csv(root / "cross_exclusivity_audit.csv", result.cross_exclusivity_audit),
         _write_csv(root / "axis_dependence_long.csv", result.axis_dependence_long),
@@ -491,6 +693,15 @@ def write_reliability_sidecars(
         ),
         "classification_mode": "classified" if cfg.classification_enabled else "continuous",
         "state_fraction_denominator": "classified_valid_spots",
+        "metric_defined_fraction_denominator": "valid_input_n",
+        "metric_inference_eligibility_rule": (
+            "Direction/CA_fraction require PASS in both Pre and Post: defined_n >= "
+            "minimum_valid_spots and defined_fraction >= minimum_valid_fraction"
+        ),
+        "metric_inference_missing_value_policy": (
+            "Ineligible Direction/CA_fraction bootstrap CI, permutation p, and BH-FDR remain NaN/null"
+        ),
+        "bh_fdr_missing_value_policy": "finite eligible p-values only; NaN positions remain NaN",
         "dependence_policy": "reported_only_no_axis_transformation",
         "resampling_scope": "spot_distribution_descriptive_unregistered_slides",
         "specimen_level_inference": False,
@@ -507,6 +718,7 @@ def write_reliability_sidecars(
         "axis_count": int(len(result.axis_dependence_matrix)),
         "spot_row_count": int(len(result.spot_results)),
         "pair_summary_row_count": int(len(result.pair_summary)),
+        "metric_qc_row_count": int(len(result.metric_qc)),
         "gene_coverage_row_count": int(len(result.gene_coverage)),
         "cross_exclusivity_hard_error_count": int(
             result.cross_exclusivity_audit.get("severity", pd.Series(dtype=str)).eq("hard_error").sum()

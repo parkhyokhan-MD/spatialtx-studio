@@ -22,7 +22,11 @@ from ..reliability.audit import (
 from ..reliability.core import axis_spot_frame, compute_reliability_axes
 from ..reliability.dependence import compute_axis_dependence, direction_dependence_matrix
 from ..reliability.diagnostics import build_score_domain_diagnostic
-from ..reliability.exports import build_pair_summary, write_reliability_sidecars
+from ..reliability.exports import (
+    build_metric_qc_table,
+    build_pair_summary,
+    write_reliability_sidecars,
+)
 from ..reliability.models import (
     RELIABILITY_SCHEMA_VERSION,
     ReliabilityConfig,
@@ -220,6 +224,7 @@ class MultiPairRunResult:
     comparative_qc_summary: pd.DataFrame = field(default_factory=pd.DataFrame)
     reliability_spot_results: pd.DataFrame = field(default_factory=pd.DataFrame)
     reliability_pair_summary: pd.DataFrame = field(default_factory=pd.DataFrame)
+    reliability_metric_qc: pd.DataFrame = field(default_factory=pd.DataFrame)
     reliability_gene_coverage: pd.DataFrame = field(default_factory=pd.DataFrame)
     cross_exclusivity_audit: pd.DataFrame = field(default_factory=pd.DataFrame)
     axis_dependence_long: pd.DataFrame = field(default_factory=pd.DataFrame)
@@ -1376,6 +1381,7 @@ def run_multi_pair_analysis(
     reliability_result = ReliabilityResult()
     reliability_spot_tables: list[pd.DataFrame] = []
     reliability_pair_tables: list[pd.DataFrame] = []
+    reliability_metric_qc_tables: list[pd.DataFrame] = []
     reliability_coverage_tables: list[pd.DataFrame] = []
     reliability_dependence_tables: list[pd.DataFrame] = []
     reliability_diagnostic_tables: list[pd.DataFrame] = []
@@ -1507,6 +1513,7 @@ def run_multi_pair_analysis(
                                 pair_label=pair.label,
                                 sample_role="Pre",
                                 sample_file=str(pair.pre_path),
+                                axis="FRAME2.6_CS",
                                 legacy_C=pre_fields["C"],
                                 legacy_S=pre_fields["S"],
                                 activity_C=pre_fields["C_activity"],
@@ -1517,6 +1524,7 @@ def run_multi_pair_analysis(
                                 pair_label=pair.label,
                                 sample_role="Post",
                                 sample_file=str(pair.post_path),
+                                axis="FRAME2.6_CS",
                                 legacy_C=post_fields["C"],
                                 legacy_S=post_fields["S"],
                                 activity_C=post_fields["C_activity"],
@@ -1587,6 +1595,12 @@ def run_multi_pair_analysis(
                                 reliability_config,
                                 pre_coverage=_coverage_by_pole(pre_coverage, axis),
                                 post_coverage=_coverage_by_pole(post_coverage, axis),
+                            ))
+                            reliability_metric_qc_tables.append(build_metric_qc_table(
+                                pair.label,
+                                pre_axis,
+                                post_axis,
+                                reliability_config,
                             ))
                         reliability_dependence_tables.extend((
                             compute_axis_dependence(
@@ -1744,6 +1758,10 @@ def run_multi_pair_analysis(
             pd.concat(reliability_pair_tables, ignore_index=True)
             if reliability_pair_tables else pd.DataFrame()
         )
+        reliability_result.metric_qc = (
+            pd.concat(reliability_metric_qc_tables, ignore_index=True)
+            if reliability_metric_qc_tables else pd.DataFrame()
+        )
         reliability_result.gene_coverage = (
             pd.concat(reliability_coverage_tables, ignore_index=True)
             if reliability_coverage_tables else pd.DataFrame()
@@ -1763,6 +1781,36 @@ def run_multi_pair_analysis(
             pd.concat(reliability_diagnostic_tables, ignore_index=True)
             if reliability_diagnostic_tables else pd.DataFrame()
         )
+        if (
+            not reliability_result.score_domain_diagnostic.empty
+            and not reliability_result.metric_qc.empty
+        ):
+            diagnostic_keys = ["pair_label", "sample_role", "axis"]
+            reliability_result.score_domain_diagnostic = (
+                reliability_result.score_domain_diagnostic.merge(
+                    reliability_result.metric_qc,
+                    on=diagnostic_keys,
+                    how="left",
+                    validate="many_to_one",
+                )
+            )
+            metric_qc_columns = [
+                column for column in reliability_result.metric_qc.columns
+                if column not in diagnostic_keys
+            ]
+            legacy_rows = ~reliability_result.score_domain_diagnostic["score_role"].eq("activity")
+            # Metric-level support applies to the nonnegative Activity path,
+            # not the preserved signed Balance diagnostic rows.  Convert
+            # NumPy bool/int merge columns to nullable dtypes before masking so
+            # missing audit values remain true nulls on current pandas.
+            for column in metric_qc_columns:
+                series = reliability_result.score_domain_diagnostic[column]
+                if pd.api.types.is_bool_dtype(series.dtype):
+                    series = series.astype("boolean")
+                elif pd.api.types.is_integer_dtype(series.dtype):
+                    series = series.astype("Int64")
+                reliability_result.score_domain_diagnostic[column] = series.mask(legacy_rows)
+            reliability_result.score_domain_diagnostic["metric_qc_applies"] = ~legacy_rows
         reliability_result.score_domain_diagnostic_metadata = {
             "reliability_schema_version": RELIABILITY_SCHEMA_VERSION,
             "first_negative_stage": "workflow.score_adata:_zscore_columns(expression)",
@@ -1782,6 +1830,12 @@ def run_multi_pair_analysis(
                 "normalization_mode=raw_mean applies after per-gene z-scoring and therefore denotes "
                 "the unmodified mean of signed z-scores, not raw abundance."
             ),
+            "metric_defined_fraction_denominator": "valid_input_n",
+            "metric_inference_eligibility_rule": (
+                "Direction and CA_fraction require PASS in both Pre and Post: defined_n >= 30 "
+                "and defined_fraction >= 0.80; CAUTION begins at 0.50."
+            ),
+            "metric_level_qc_records": reliability_result.metric_qc.to_dict(orient="records"),
         }
         domain_qc_fail_count = int(
             reliability_result.pair_summary.get(
@@ -1812,6 +1866,26 @@ def run_multi_pair_analysis(
             "context_axes_audited_but_not_reinterpreted": [
                 axis for axis in ("H_context", "V_context") if axis in reliability_programs
             ],
+            "direction_sample_qc_counts": (
+                reliability_result.metric_qc.get(
+                    "direction_qc_status", pd.Series(dtype=str)
+                ).value_counts().sort_index().to_dict()
+            ),
+            "ca_sample_qc_counts": (
+                reliability_result.metric_qc.get(
+                    "ca_qc_status", pd.Series(dtype=str)
+                ).value_counts().sort_index().to_dict()
+            ),
+            "direction_pair_qc_counts": (
+                reliability_result.pair_summary.get(
+                    "direction_qc_status", pd.Series(dtype=str)
+                ).value_counts().sort_index().to_dict()
+            ),
+            "ca_pair_qc_counts": (
+                reliability_result.pair_summary.get(
+                    "ca_qc_status", pd.Series(dtype=str)
+                ).value_counts().sort_index().to_dict()
+            ),
         }
         write_reliability_sidecars(run_dir, reliability_result, reliability_config)
         dependence_figure = run_dir / "axis_dependence_heatmap.png"
@@ -1958,6 +2032,11 @@ def run_multi_pair_analysis(
                 "it does not mean raw abundance."
             ),
             "undefined_policy": "NaN retained; no replacement with zero, normal, or negative state",
+            "metric_defined_fraction_denominator": "valid_input_n",
+            "metric_inference_eligibility_rule": (
+                "Direction/CA_fraction require PASS in Pre and Post; each defined_n >= 30 and "
+                "defined_fraction >= 0.80. Ineligible bootstrap CI, p, and FDR remain NaN."
+            ),
             "classification_mode": (
                 "classified" if reliability_config.classification_enabled else "continuous"
             ),
@@ -2033,6 +2112,7 @@ def run_multi_pair_analysis(
         comparative_qc_summary=comparative_qc_summary,
         reliability_spot_results=reliability_result.spot_results,
         reliability_pair_summary=reliability_result.pair_summary,
+        reliability_metric_qc=reliability_result.metric_qc,
         reliability_gene_coverage=reliability_result.gene_coverage,
         cross_exclusivity_audit=reliability_result.cross_exclusivity_audit,
         axis_dependence_long=reliability_result.axis_dependence_long,

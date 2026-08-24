@@ -87,9 +87,13 @@ def compute_axis_reliability(
     direction[direction_defined] = activity_balance[direction_defined] / (
         activity[direction_defined] + float(cfg.epsilon)
     )
+    # CA_fraction currently has the same mathematical support as Direction,
+    # but it has its own explicit mask so metric-level QC cannot silently rely
+    # on that equivalence if the formula evolves in a later schema.
+    ca_defined = valid_input & (activity > float(cfg.epsilon))
     ca_fraction = np.full(n, np.nan, dtype=float)
-    ca_fraction[direction_defined] = ca_strength[direction_defined] / (
-        activity[direction_defined] + float(cfg.epsilon)
+    ca_fraction[ca_defined] = ca_strength[ca_defined] / (
+        activity[ca_defined] + float(cfg.epsilon)
     )
 
     status = np.full(n, "invalid_nonfinite_input", dtype=object)
@@ -132,6 +136,7 @@ def compute_axis_reliability(
         nonnegative_input=nonnegative_input,
         valid_input=valid_input,
         direction_defined=direction_defined,
+        ca_defined=ca_defined,
         balance_score_source=str(balance_score_source),
         balance_score_domain=str(balance_score_domain),
         activity_score_source=str(activity_score_source),
@@ -212,6 +217,7 @@ def axis_spot_frame(
         "nonnegative_input": result.nonnegative_input,
         "valid_input": result.valid_input,
         "direction_defined": result.direction_defined,
+        "ca_defined": result.ca_defined,
     })
 
 
@@ -223,6 +229,7 @@ def summarize_axis(result: AxisReliabilityResult) -> dict:
     n = len(result.C)
     valid_count = int(result.valid_input.sum())
     direction_count = int(result.direction_defined.sum())
+    ca_count = int(result.ca_defined.sum())
     classified = np.fromiter(
         (value is not None for value in result.reliability_state), dtype=bool, count=n
     )
@@ -233,9 +240,17 @@ def summarize_axis(result: AxisReliabilityResult) -> dict:
         "n_finite_input": int(result.finite_input.sum()),
         "n_valid_nonnegative_input": valid_count,
         "n_direction_defined": direction_count,
+        "n_ca_defined": ca_count,
         "finite_input_fraction": float(result.finite_input.mean()) if n else np.nan,
         "valid_input_fraction": float(result.valid_input.mean()) if n else np.nan,
-        "direction_defined_fraction": float(result.direction_defined.mean()) if n else np.nan,
+        "direction_defined_fraction": (
+            float(direction_count / valid_count) if valid_count else np.nan
+        ),
+        "ca_defined_fraction": float(ca_count / valid_count) if valid_count else np.nan,
+        "direction_defined_fraction_all_spots_legacy": (
+            float(result.direction_defined.mean()) if n else np.nan
+        ),
+        "ca_defined_fraction_all_spots": float(result.ca_defined.mean()) if n else np.nan,
         "undefined_fraction": float((~result.direction_defined).mean()) if n else np.nan,
         "negative_input_fraction": float((result.finite_input & ~result.nonnegative_input).mean()) if n else np.nan,
         "nonfinite_input_fraction": float((~result.finite_input).mean()) if n else np.nan,

@@ -2,8 +2,11 @@
 
 All notable public and development changes to SpatialTX Studio Desktop are recorded here.
 
-## v0.65-dev — 2026-08-19
+## v0.65 — 2026-08-24
 
+- Added three v0.65 release screenshots covering Reliability metric-level QC, score-domain audit, and the observational H/V joint-state spatial map.
+- Added separate Direction and CA_fraction metric-level QC (`defined_n / valid_input_n`) so descriptive values remain visible while bootstrap CI, permutation p, and BH-FDR stay `NaN` unless both Pre and Post have at least 30 defined spots and at least 80% defined support; 50–79.9% is CAUTION and below 50% is FAIL.
+- Added `reliability_metric_qc.csv`, explicit QC reasons/eligibility metadata, finite-eligible-only BH handling, GUI `p: N/A` rendering, Direction dependence gating, and internal schema `v0.65-reliability-v3-metric-qc` without changing public v0.6 outputs.
 - Added an original SpatialTX Studio spatial-dot application icon, including transparent PNG and multi-size Windows ICO assets, and applied it to the Tk window/taskbar with a non-fatal fallback.
 - Changed the Single Pair `Program scores — Changes` figure from non-informative centered C/S/R means to sample-level C/S/R medians; legacy mean rows remain available in exports for compatibility.
 - Added an optional, default-off Multi-axis Reliability Layer to Multi-Pair Pre/Post without changing v0.6 core scoring or established output tables.
@@ -14,7 +17,7 @@ All notable public and development changes to SpatialTX Studio Desktop are recor
 - Added non-transforming inter-axis dependence QC with Pearson, Spearman, seeded permutation, and BH-FDR infrastructure.
 - Added score-domain CSV/JSON diagnostics, a valid-fraction QC figure, source/domain metadata, and a default-off `v0.65 Reliability` UI tab; H/V remain observational single-pole contexts and are not reinterpreted as paired-pole axes.
 - Preserved pan-cancer/default axis weight 1.0 and recorded epsilon, thresholds, KNN, bootstrap, permutation, FDR, seed, source hashes, and limitations in metadata.
-- Verified the six-pair legacy Balance baseline in 72 comparisons at `rtol=atol=1e-12`; repeated seed-42 runs produced 15 byte-identical reliability artifacts.
+- Verified the six-pair legacy Balance baseline in 72 comparisons at `rtol=atol=1e-12`; repeated seed-42 runs produced 18 byte-identical Reliability artifacts after the metric-level QC correction.
 - Confirmed that the corrected nonnegative Activity source passes the default valid-spot gate in all six validation pairs; unsupported or QC-failed values remain `NA` and are excluded from conclusions.
 
 ## v0.6-beta — 2026-08-12
